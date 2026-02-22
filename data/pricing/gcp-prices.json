@@ -1,0 +1,59 @@
+{
+  "provider": "gcp",
+  "region": "us-central1",
+  "lastUpdated": "2025-01-15",
+  "compute": {
+    "e2-micro": { "vCPUs": 0.25, "memoryGB": 1, "hourlyPrice": 0.0084 },
+    "e2-small": { "vCPUs": 0.5, "memoryGB": 2, "hourlyPrice": 0.0168 },
+    "e2-medium": { "vCPUs": 1, "memoryGB": 4, "hourlyPrice": 0.0335 },
+    "e2-standard-2": { "vCPUs": 2, "memoryGB": 8, "hourlyPrice": 0.067 },
+    "e2-standard-4": { "vCPUs": 4, "memoryGB": 16, "hourlyPrice": 0.134 },
+    "n2-standard-2": { "vCPUs": 2, "memoryGB": 8, "hourlyPrice": 0.0971 },
+    "n2-standard-4": { "vCPUs": 4, "memoryGB": 16, "hourlyPrice": 0.1942 },
+    "c2-standard-4": { "vCPUs": 4, "memoryGB": 16, "hourlyPrice": 0.2088 }
+  },
+  "database": {
+    "db-f1-micro": { "hourlyPrice": 0.0105 },
+    "db-g1-small": { "hourlyPrice": 0.0255 },
+    "db-custom-1-3840": { "hourlyPrice": 0.0515 },
+    "db-n1-standard-1": { "hourlyPrice": 0.0965 },
+    "db-n1-standard-2": { "hourlyPrice": 0.193 }
+  },
+  "storage": {
+    "pdSsdPerGB": 0.17,
+    "pdBalancedPerGB": 0.10,
+    "gcsPerGB": 0.02
+  },
+  "network": {
+    "lbHourly": 0.025,
+    "lbPerGB": 0.008,
+    "cloudCDNPerGB": 0.08,
+    "natGatewayHourly": 0.044,
+    "natGatewayPerGB": 0.045,
+    "staticIPMonthly": 2.88
+  },
+  "security": {
+    "cloudArmorPolicyMonthly": 5.0,
+    "cloudArmorRuleMonthly": 1.0,
+    "cloudArmorRequestsPer10k": 0.00075
+  },
+  "services": {
+    "cache": {
+      "M1": { "hourlyPrice": 0.016 },
+      "M2": { "hourlyPrice": 0.065 },
+      "M3": { "hourlyPrice": 0.193 }
+    },
+    "queue": {
+      "cloudTasksPerMillion": 0.40
+    },
+    "streaming": {
+      "pubsubPerTBIngested": 40.0,
+      "pubsubBaseMonthly": 0.0
+    }
+  },
+  "other": {
+    "secretManagerPerVersion": 0.06,
+    "loggingPerGB": 0.50,
+    "cloudDNSZoneMonthly": 0.20
+  }
+}

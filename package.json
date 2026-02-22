@@ -1,0 +1,40 @@
+{
+  "name": "launchpilot",
+  "version": "0.1.0",
+  "description": "CLI tool that analyzes GitHub repos and deploys to AWS/GCP/Azure with security hardening and cost optimization",
+  "type": "module",
+  "bin": {
+    "launchpilot": "./dist/bin/launchpilot.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx bin/launchpilot.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^13.0.0",
+    "@inquirer/prompts": "^7.0.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.1.0",
+    "cli-table3": "^0.6.5",
+    "cli-progress": "^3.12.0",
+    "simple-git": "^3.27.0",
+    "boxen": "^8.0.1",
+    "nanoid": "^5.0.9",
+    "zod": "^3.24.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.6",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

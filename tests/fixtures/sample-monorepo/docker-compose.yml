@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  postgresql:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: campaign_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgresql
+      - redis
+
+  celery-worker:
+    build: ./backend
+    command: celery -A app worker --loglevel=info
+    depends_on:
+      - redis
+
+  celery-beat:
+    build: ./backend
+    command: celery -A app beat --loglevel=info
+    depends_on:
+      - redis
+
+  campaign-scheduler:
+    build: ./backend
+    command: python scheduler.py
+    depends_on:
+      - postgresql
+      - redis
+
+  mock-telephony:
+    build: ./backend
+    command: python mock_telephony.py
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

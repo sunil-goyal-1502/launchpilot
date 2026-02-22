@@ -1,0 +1,13 @@
+{
+  "name": "sample-kafka-app",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "kafkajs": "^2.2.0",
+    "cors": "^2.8.5"
+  }
+}

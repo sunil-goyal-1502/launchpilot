@@ -1,0 +1,62 @@
+{
+  "provider": "aws",
+  "region": "us-east-1",
+  "lastUpdated": "2025-01-15",
+  "compute": {
+    "t3.micro": { "vCPUs": 2, "memoryGB": 1, "hourlyPrice": 0.0104 },
+    "t3.small": { "vCPUs": 2, "memoryGB": 2, "hourlyPrice": 0.0208 },
+    "t3.medium": { "vCPUs": 2, "memoryGB": 4, "hourlyPrice": 0.0416 },
+    "t3.large": { "vCPUs": 2, "memoryGB": 8, "hourlyPrice": 0.0832 },
+    "m6i.large": { "vCPUs": 2, "memoryGB": 8, "hourlyPrice": 0.096 },
+    "m6i.xlarge": { "vCPUs": 4, "memoryGB": 16, "hourlyPrice": 0.192 },
+    "c6i.xlarge": { "vCPUs": 4, "memoryGB": 8, "hourlyPrice": 0.17 },
+    "c6i.2xlarge": { "vCPUs": 8, "memoryGB": 16, "hourlyPrice": 0.34 }
+  },
+  "database": {
+    "db.t3.micro": { "hourlyPrice": 0.017 },
+    "db.t3.small": { "hourlyPrice": 0.034 },
+    "db.t3.medium": { "hourlyPrice": 0.068 },
+    "db.r6g.large": { "hourlyPrice": 0.26 },
+    "db.r6g.xlarge": { "hourlyPrice": 0.52 }
+  },
+  "storage": {
+    "gp3PerGB": 0.08,
+    "io1PerGB": 0.125,
+    "s3PerGB": 0.023
+  },
+  "network": {
+    "albHourly": 0.0225,
+    "albPerLCU": 0.008,
+    "natGatewayHourly": 0.045,
+    "natGatewayPerGB": 0.045,
+    "cloudFrontPerGB": 0.085,
+    "elasticIPMonthly": 3.65
+  },
+  "security": {
+    "wafMonthly": 5.0,
+    "wafRuleMonthly": 1.0,
+    "wafRequestsPer10k": 0.0006,
+    "shieldAdvancedMonthly": 3000.0
+  },
+  "services": {
+    "cache": {
+      "cache.t3.micro": { "hourlyPrice": 0.017 },
+      "cache.t3.medium": { "hourlyPrice": 0.068 },
+      "cache.r6g.large": { "hourlyPrice": 0.197 }
+    },
+    "queue": {
+      "sqsPerMillion": 0.40,
+      "sqsFifoPerMillion": 0.50
+    },
+    "streaming": {
+      "kinesisShardHourly": 0.036,
+      "mskBrokerHourly": 0.21,
+      "mskServerlessHourly": 0.09
+    }
+  },
+  "other": {
+    "secretsManagerPerSecret": 0.40,
+    "cloudwatchLogsPerGB": 0.50,
+    "route53HostedZone": 0.50
+  }
+}
