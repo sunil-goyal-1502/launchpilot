@@ -181,7 +181,8 @@ export async function detectNode(repoPath: string, subDir?: string): Promise<Nod
   // Determine app type from highest-confidence framework
   const primaryFramework = frameworks.sort((a, b) => b.confidence - a.confidence)[0]!;
   const primaryPattern = FRAMEWORK_PATTERNS.find((p) => p.name === primaryFramework.name);
-  let appType: AppType = primaryPattern?.appType ?? 'unknown';
+  const configPattern = Object.values(CONFIG_FILE_FRAMEWORKS).find((c) => c.framework === primaryFramework.name);
+  let appType: AppType = primaryPattern?.appType ?? configPattern?.appType ?? 'unknown';
 
   // If we have both frontend + backend frameworks, it's fullstack
   const hasBackend = frameworks.some((f) =>
