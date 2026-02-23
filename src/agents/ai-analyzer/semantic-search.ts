@@ -1,5 +1,5 @@
 import { SearchResponse, TokenUsage, DEFAULT_AI_CONFIG } from '../../types/ai-analysis.js';
-import { ClaudeClient } from './claude-client.js';
+import { LLMProvider, ProviderConfig, createLLMProvider } from './llm-provider.js';
 import { EmbeddingService } from './embedding-service.js';
 import { VectorStore } from './vector-store.js';
 import { SEARCH_SYSTEM_PROMPT, buildSearchUserMessage } from './prompts/search-prompt.js';
@@ -11,12 +11,12 @@ import { SEARCH_SYSTEM_PROMPT, buildSearchUserMessage } from './prompts/search-p
 
 export class SemanticSearch {
   private store: VectorStore;
-  private client: ClaudeClient;
+  private client: LLMProvider;
   private embeddingService: EmbeddingService;
 
-  constructor(apiKey: string, dbPath?: string) {
+  constructor(providerConfig: ProviderConfig, dbPath?: string) {
     this.store = new VectorStore(dbPath);
-    this.client = new ClaudeClient(apiKey);
+    this.client = createLLMProvider(providerConfig);
     this.embeddingService = new EmbeddingService(this.client);
   }
 
@@ -53,7 +53,7 @@ export class SemanticSearch {
       };
     }
 
-    // Synthesize answer via Claude
+    // Synthesize answer via LLM
     const userMessage = buildSearchUserMessage(query, results);
     const { text: answer, usage } = await this.client.analyze(
       SEARCH_SYSTEM_PROMPT,

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { TokenUsage, DEFAULT_AI_CONFIG } from '../../types/ai-analysis.js';
+import { LLMProvider, extractJson } from './llm-provider.js';
 
 /**
  * Anthropic SDK wrapper with retry logic, token tracking, and cost estimation.
@@ -15,7 +16,8 @@ const PRICING: Record<string, { input: number; output: number }> = {
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
-export class ClaudeClient {
+export class ClaudeClient implements LLMProvider {
+  readonly providerName = 'anthropic';
   private client: Anthropic;
   private totalUsage: { inputTokens: number; outputTokens: number } = { inputTokens: 0, outputTokens: 0 };
 
@@ -23,7 +25,11 @@ export class ClaudeClient {
     this.client = new Anthropic({ apiKey });
   }
 
-  // ── API key validation ──
+  // ── Connection / API key validation ──
+
+  async validateConnection(): Promise<boolean> {
+    return this.validateApiKey();
+  }
 
   async validateApiKey(): Promise<boolean> {
     try {
@@ -172,23 +178,4 @@ export class ClaudeClient {
 
     throw lastError;
   }
-}
-
-// ── JSON extraction helper ──
-
-function extractJson(text: string): string {
-  // Try direct parse first
-  const trimmed = text.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return trimmed;
-
-  // Try extracting from markdown code block
-  const match = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (match?.[1]) return match[1].trim();
-
-  // Last resort: find first { to last }
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start !== -1 && end > start) return trimmed.slice(start, end + 1);
-
-  return trimmed;
 }

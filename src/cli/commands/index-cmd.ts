@@ -4,6 +4,7 @@ import { validateRepoUrl } from '../../utils/validator.js';
 import { PipelineContext } from '../../orchestrator/context.js';
 import { IngestionAgent } from '../../agents/ingestion/ingestion-agent.js';
 import { AIAnalyzerAgent } from '../../agents/ai-analyzer/ai-analyzer-agent.js';
+import { ProviderConfig, ProviderType } from '../../agents/ai-analyzer/llm-provider.js';
 import { showBanner } from '../display.js';
 import { createSpinner } from '../progress.js';
 import { logger } from '../../utils/logger.js';
@@ -13,7 +14,9 @@ export function createIndexCommand(): Command {
   return new Command('index')
     .description('Index a repository for semantic search (force re-index)')
     .argument('<url>', 'GitHub repository URL or local://path')
-    .action(async (url: string) => {
+    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
+    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
+    .action(async (url: string, options: { provider?: string; model?: string }) => {
       showBanner();
 
       const validation = validateRepoUrl(url);
@@ -22,9 +25,18 @@ export function createIndexCommand(): Command {
         process.exit(1);
       }
 
-      const apiKey = process.env['ANTHROPIC_API_KEY'];
-      if (!apiKey) {
-        logger.error('ANTHROPIC_API_KEY environment variable is required for indexing.');
+      const providerType = (options.provider ??
+        (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
+
+      const providerConfig: ProviderConfig = {
+        provider: providerType,
+        apiKey: process.env['ANTHROPIC_API_KEY'],
+        ollamaHost: process.env['OLLAMA_HOST'],
+        analysisModel: options.model,
+      };
+
+      if (providerType === 'anthropic' && !providerConfig.apiKey) {
+        logger.error('ANTHROPIC_API_KEY environment variable is required for Anthropic provider. Use --provider ollama for local models.');
         process.exit(1);
       }
 
@@ -50,7 +62,7 @@ export function createIndexCommand(): Command {
         const repoPath = context.get<string>('repoPath')!;
         const aiAgent = new AIAnalyzerAgent();
         const enhanced = await aiAgent.execute(
-          { repoUrl: url, repoPath, blueprint },
+          { repoUrl: url, repoPath, blueprint, providerConfig },
           context,
         );
 

@@ -3,6 +3,7 @@ import { validateRepoUrl } from '../../utils/validator.js';
 import { PipelineContext } from '../../orchestrator/context.js';
 import { IngestionAgent } from '../../agents/ingestion/ingestion-agent.js';
 import { AIAnalyzerAgent } from '../../agents/ai-analyzer/ai-analyzer-agent.js';
+import { ProviderConfig, ProviderType } from '../../agents/ai-analyzer/llm-provider.js';
 import { showBanner, showBlueprint, showAIAnalysis } from '../display.js';
 import { createSpinner } from '../progress.js';
 import { logger } from '../../utils/logger.js';
@@ -12,8 +13,10 @@ export function createAnalyzeCommand(): Command {
   return new Command('analyze')
     .description('Analyze a repository and show its technology blueprint')
     .argument('<url>', 'GitHub repository URL or local://path')
-    .option('--ai', 'Enable AI-powered deep analysis (requires ANTHROPIC_API_KEY)')
-    .action(async (url: string, options: { ai?: boolean }) => {
+    .option('--ai', 'Enable AI-powered deep analysis (requires ANTHROPIC_API_KEY or Ollama)')
+    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
+    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
+    .action(async (url: string, options: { ai?: boolean; provider?: string; model?: string }) => {
       showBanner();
 
       const validation = validateRepoUrl(url);
@@ -38,8 +41,18 @@ export function createAnalyzeCommand(): Command {
 
       // AI analysis (opt-in)
       if (useAI) {
-        if (!AIAnalyzerAgent.isAvailable()) {
-          logger.warn('ANTHROPIC_API_KEY not set — skipping AI analysis. Set the env var and retry with --ai.');
+        const providerType = (options.provider ??
+          (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
+
+        const providerConfig: ProviderConfig = {
+          provider: providerType,
+          apiKey: process.env['ANTHROPIC_API_KEY'],
+          ollamaHost: process.env['OLLAMA_HOST'],
+          analysisModel: options.model,
+        };
+
+        if (!AIAnalyzerAgent.isAvailable(providerConfig)) {
+          logger.warn('No AI provider available. Set ANTHROPIC_API_KEY or ensure Ollama is running.');
         } else {
           const aiSpinner = createSpinner('Running AI deep analysis...');
           aiSpinner.start();
@@ -48,7 +61,7 @@ export function createAnalyzeCommand(): Command {
             const repoPath = context.get<string>('repoPath')!;
             const aiAgent = new AIAnalyzerAgent();
             const enhanced = await aiAgent.execute(
-              { repoUrl: url, repoPath, blueprint },
+              { repoUrl: url, repoPath, blueprint, providerConfig },
               context,
             );
 

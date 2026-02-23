@@ -143,3 +143,9 @@ export const DEFAULT_AI_CONFIG: Omit<AIAnalyzerConfig, 'anthropicApiKey'> = {
   dbPath: 'data/launchpilot.db',
   topK: 10,
 };
+
+export const DEFAULT_OLLAMA_CONFIG = {
+  analysisModel: 'qwen2.5-coder:14b',
+  embeddingModel: 'qwen2.5-coder:7b',
+  host: 'http://localhost:11434',
+};

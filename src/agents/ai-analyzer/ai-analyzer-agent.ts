@@ -2,7 +2,7 @@ import { BaseAgent } from '../base-agent.js';
 import { PipelineContext } from '../../orchestrator/context.js';
 import { ApplicationBlueprint } from '../../types/index.js';
 import { AIAnalysis, EnhancedBlueprint, DEFAULT_AI_CONFIG } from '../../types/ai-analysis.js';
-import { ClaudeClient } from './claude-client.js';
+import { LLMProvider, ProviderConfig, createLLMProvider } from './llm-provider.js';
 import { selectFiles } from './file-selector.js';
 import { chunkFiles } from './code-chunker.js';
 import { EmbeddingService } from './embedding-service.js';
@@ -16,6 +16,7 @@ export interface AIAnalyzerInput {
   repoPath: string;
   blueprint: ApplicationBlueprint;
   commitHash?: string;
+  providerConfig?: ProviderConfig;
 }
 
 export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprint> {
@@ -23,15 +24,20 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
   readonly description = 'Deep AI-powered code analysis with persistent vector indexing';
 
   /**
-   * Check if the AI analyzer can run (API key available).
+   * Check if the AI analyzer can run (API key or Ollama available).
    */
-  static isAvailable(): boolean {
+  static isAvailable(providerConfig?: ProviderConfig): boolean {
+    if (providerConfig?.provider === 'ollama') return true;
     return !!process.env['ANTHROPIC_API_KEY'];
   }
 
   async execute(input: AIAnalyzerInput, context: PipelineContext): Promise<EnhancedBlueprint> {
-    const apiKey = process.env['ANTHROPIC_API_KEY'];
-    if (!apiKey) {
+    const providerConfig = input.providerConfig ?? {
+      provider: 'anthropic' as const,
+      apiKey: process.env['ANTHROPIC_API_KEY'],
+    };
+
+    if (providerConfig.provider === 'anthropic' && !providerConfig.apiKey) {
       this.log(context, 'No ANTHROPIC_API_KEY — returning blueprint without AI analysis');
       return { blueprint: input.blueprint, aiAnalysis: null };
     }
@@ -52,7 +58,7 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
         return { blueprint: input.blueprint, aiAnalysis };
       }
 
-      const client = new ClaudeClient(apiKey);
+      const client = createLLMProvider(providerConfig);
 
       // Step 2: File selection
       const files = await this.timed(context, 'file-selection', async () => {
@@ -105,13 +111,15 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
 
       // Build final AIAnalysis
       const embUsage = embeddingService.getTokenUsage();
+      const isLocal = client.providerName === 'ollama';
+      const embeddingCost = isLocal ? 0 :
+        (embUsage.inputTokens / 1_000_000) * 0.80 +
+        (embUsage.outputTokens / 1_000_000) * 4;
       const totalTokenUsage = {
         inputTokens: analysisUsage.inputTokens + embUsage.inputTokens,
         outputTokens: analysisUsage.outputTokens + embUsage.outputTokens,
-        model: DEFAULT_AI_CONFIG.analysisModel,
-        estimatedCostUSD: analysisUsage.estimatedCostUSD +
-          (embUsage.inputTokens / 1_000_000) * 0.80 +
-          (embUsage.outputTokens / 1_000_000) * 4,
+        model: analysisUsage.model,
+        estimatedCostUSD: analysisUsage.estimatedCostUSD + embeddingCost,
       };
 
       const aiAnalysis: AIAnalysis = {

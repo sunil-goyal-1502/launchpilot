@@ -15,10 +15,13 @@ vi.mock('@anthropic-ai/sdk', () => {
 import { SemanticSearch } from '../../../src/agents/ai-analyzer/semantic-search.js';
 import { VectorStore } from '../../../src/agents/ai-analyzer/vector-store.js';
 import { textToVector } from '../../../src/agents/ai-analyzer/embedding-service.js';
+import { ProviderConfig } from '../../../src/agents/ai-analyzer/llm-provider.js';
+
+const anthropicConfig: ProviderConfig = { provider: 'anthropic', apiKey: 'test-key' };
 
 describe('SemanticSearch', () => {
   it('should throw error for unindexed repo', async () => {
-    const search = new SemanticSearch('test-key', ':memory:');
+    const search = new SemanticSearch(anthropicConfig, ':memory:');
     await search.initialize();
 
     await expect(
@@ -60,7 +63,7 @@ describe('SemanticSearch', () => {
     // Test that SemanticSearch properly initializes and the pipeline works end-to-end
     // by mocking the API response.
 
-    const search = new SemanticSearch('test-key', ':memory:');
+    const search = new SemanticSearch(anthropicConfig, ':memory:');
     await search.initialize();
 
     // Not indexed → should throw
@@ -70,7 +73,7 @@ describe('SemanticSearch', () => {
   });
 
   it('should properly check if repo is indexed', async () => {
-    const search = new SemanticSearch('test-key', ':memory:');
+    const search = new SemanticSearch(anthropicConfig, ':memory:');
     await search.initialize();
 
     expect(search.isRepoIndexed('nonexistent')).toBe(false);

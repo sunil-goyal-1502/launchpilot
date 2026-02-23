@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { CodeChunk, ChunkEmbedding, DEFAULT_AI_CONFIG } from '../../types/ai-analysis.js';
-import { ClaudeClient } from './claude-client.js';
+import { LLMProvider } from './llm-provider.js';
 import { buildEmbeddingPrompt } from './prompts/embedding-prompt.js';
 
 /**
@@ -46,11 +46,11 @@ export function textToVector(text: string, dimensions: number = DIMENSIONS): num
 // ── Embedding service ──
 
 export class EmbeddingService {
-  private client: ClaudeClient;
+  private client: LLMProvider;
   private totalInputTokens = 0;
   private totalOutputTokens = 0;
 
-  constructor(client: ClaudeClient) {
+  constructor(client: LLMProvider) {
     this.client = client;
   }
 

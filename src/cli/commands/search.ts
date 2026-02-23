@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { validateRepoUrl } from '../../utils/validator.js';
 import { SemanticSearch } from '../../agents/ai-analyzer/semantic-search.js';
+import { ProviderConfig, ProviderType } from '../../agents/ai-analyzer/llm-provider.js';
 import { showBanner } from '../display.js';
 import { createSpinner } from '../progress.js';
 import { logger } from '../../utils/logger.js';
@@ -12,7 +13,9 @@ export function createSearchCommand(): Command {
     .argument('<url>', 'GitHub repository URL or local://path')
     .argument('<query>', 'Natural language search query')
     .option('--top-k <number>', 'Number of results to return', '10')
-    .action(async (url: string, query: string, options: { topK?: string }) => {
+    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
+    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
+    .action(async (url: string, query: string, options: { topK?: string; provider?: string; model?: string }) => {
       showBanner();
 
       const validation = validateRepoUrl(url);
@@ -21,9 +24,18 @@ export function createSearchCommand(): Command {
         process.exit(1);
       }
 
-      const apiKey = process.env['ANTHROPIC_API_KEY'];
-      if (!apiKey) {
-        logger.error('ANTHROPIC_API_KEY environment variable is required for search.');
+      const providerType = (options.provider ??
+        (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
+
+      const providerConfig: ProviderConfig = {
+        provider: providerType,
+        apiKey: process.env['ANTHROPIC_API_KEY'],
+        ollamaHost: process.env['OLLAMA_HOST'],
+        analysisModel: options.model,
+      };
+
+      if (providerType === 'anthropic' && !providerConfig.apiKey) {
+        logger.error('ANTHROPIC_API_KEY environment variable is required for Anthropic provider. Use --provider ollama for local models.');
         process.exit(1);
       }
 
@@ -31,7 +43,7 @@ export function createSearchCommand(): Command {
       const spinner = createSpinner('Searching codebase...');
       spinner.start();
 
-      const search = new SemanticSearch(apiKey);
+      const search = new SemanticSearch(providerConfig);
       try {
         await search.initialize();
         const response = await search.search(url, query, topK);
