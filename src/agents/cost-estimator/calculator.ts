@@ -257,6 +257,18 @@ export function calculateCost(strategy: ScalingStrategy): CostBreakdown {
     });
   }
 
+  // Vendor subscription cost
+  if (strategy.vendorSubscription && strategy.vendorSubscription.monthlyEstimate > 0) {
+    items.push({
+      service: 'Vendor Subscription',
+      resource: `${strategy.vendorSubscription.vendorName} (${strategy.vendorSubscription.pricingTier})`,
+      unit: 'month',
+      quantity: 1,
+      unitPrice: strategy.vendorSubscription.monthlyEstimate,
+      monthlyTotal: strategy.vendorSubscription.monthlyEstimate,
+    });
+  }
+
   const subtotal = items.reduce((sum, item) => sum + item.monthlyTotal, 0);
   const reservedDiscount = strategy.tier !== 'low' ? round(subtotal * RESERVED_DISCOUNT) : 0;
 

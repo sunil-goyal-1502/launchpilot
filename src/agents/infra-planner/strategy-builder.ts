@@ -1,5 +1,6 @@
-import { ApplicationBlueprint, CloudProvider, ScalingStrategy, StrategyTier, AuthResource, ObjectStorageResource } from '../../types/index.js';
+import { ApplicationBlueprint, CloudProvider, ScalingStrategy, StrategyTier, AuthResource, ObjectStorageResource, BaaSMigrationChoice } from '../../types/index.js';
 import { mapRequirements, BaseRequirements } from './resource-mapper.js';
+import { buildVendorSubscription } from './baas-migration.js';
 import { getAWSTemplate } from './templates/aws-templates.js';
 import { getGCPTemplate } from './templates/gcp-templates.js';
 import { getAzureTemplate } from './templates/azure-templates.js';
@@ -28,13 +29,20 @@ const TIER_DESCRIPTIONS: Record<StrategyTier, string> = {
 export function buildStrategies(
   blueprint: ApplicationBlueprint,
   provider: CloudProvider,
+  migrationChoice?: BaaSMigrationChoice,
 ): ScalingStrategy[] {
-  const requirements = mapRequirements(blueprint);
+  const requirements = mapRequirements(blueprint, migrationChoice);
   const tiers: StrategyTier[] = ['low', 'medium', 'high'];
 
   return tiers.map((tier) => {
     const template = getTemplate(provider, tier);
     const strategy = buildStrategy(tier, template, requirements, provider);
+
+    // Attach vendor subscription if a vendor was chosen
+    if (migrationChoice?.vendor) {
+      strategy.vendorSubscription = buildVendorSubscription(migrationChoice.vendor);
+    }
+
     strategy.costBreakdown = calculateCost(strategy);
     return strategy;
   });

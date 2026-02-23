@@ -107,3 +107,32 @@ export interface ApplicationBlueprint {
   }>;
   baas?: BaaSMetadata;
 }
+
+// ── BaaS Migration Types ──
+
+export interface BaaSVendorInfo {
+  id: string;
+  name: string;
+  signupUrl: string;
+  features: BaaSFeature[];
+  pricingTier: string;
+  monthlyEstimate: number;
+  requiredEnvVars: string[];
+  setupSteps: string[];
+}
+
+export type BaaSMigrationStrategy = 'self-hosted' | 'keep-vendor' | 'migrate-vendor';
+
+export interface BaaSMigrationOption {
+  strategy: BaaSMigrationStrategy;
+  label: string;
+  description: string;
+  vendor?: BaaSVendorInfo;
+  handledFeatures: BaaSFeature[];
+}
+
+export interface BaaSMigrationChoice {
+  strategy: BaaSMigrationStrategy;
+  vendor?: BaaSVendorInfo;
+  handledFeatures: BaaSFeature[];
+}

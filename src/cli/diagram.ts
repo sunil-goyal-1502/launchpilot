@@ -106,6 +106,11 @@ export function showArchitectureDiagram(strategy: ScalingStrategy, security: Sec
     dataBoxes.push({ label: strategy.objectStorage.service, sublabel: `${strategy.objectStorage.estimatedGB}GB`, color: 'green' });
   }
 
+  if (strategy.vendorSubscription) {
+    const featureLabel = strategy.vendorSubscription.features.slice(0, 3).join('+');
+    dataBoxes.push({ label: strategy.vendorSubscription.vendorName, sublabel: featureLabel, color: 'magenta' });
+  }
+
   if (dataBoxes.length > 0) {
     lines.push(connector());
     lines.push(renderDataTier(dataBoxes));

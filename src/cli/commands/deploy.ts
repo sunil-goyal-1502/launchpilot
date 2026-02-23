@@ -7,12 +7,14 @@ import { InfraPlannerAgent } from '../../agents/infra-planner/infra-planner-agen
 import { SecurityAgent } from '../../agents/security/security-agent.js';
 import { DeployAgent } from '../../agents/deploy/deploy-agent.js';
 import { AIAnalyzerAgent } from '../../agents/ai-analyzer/ai-analyzer-agent.js';
-import { showBanner, showBlueprint, showAIAnalysis, showStrategyComparison, showSecuritySummary, showDeploymentResult } from '../display.js';
+import { ProviderConfig, ProviderType } from '../../agents/ai-analyzer/llm-provider.js';
+import { showBanner, showBlueprint, showAIAnalysis, showStrategyComparison, showSecuritySummary, showDeploymentResult, showBaaSMigrationInfo, showSubscriptionSteps } from '../display.js';
 import { cleanupDir } from '../../utils/fs-helpers.js';
 import { showArchitectureDiagram } from '../diagram.js';
 import { createSpinner, createProgressBar } from '../progress.js';
-import { selectCloud, selectStrategy, confirmDeployment, parseCloudFlag, parseStrategyFlag } from '../prompts.js';
-import { CloudProvider, StrategyTier } from '../../types/index.js';
+import { selectCloud, selectStrategy, confirmDeployment, parseCloudFlag, parseStrategyFlag, selectBaaSStrategy, parseBackendFlag } from '../prompts.js';
+import { CloudProvider, StrategyTier, BaaSMigrationChoice } from '../../types/index.js';
+import { generateMigrationOptions } from '../../agents/infra-planner/baas-migration.js';
 import { logger } from '../../utils/logger.js';
 
 export function createDeployCommand(): Command {
@@ -23,8 +25,11 @@ export function createDeployCommand(): Command {
     .option('-s, --strategy <tier>', 'Scaling strategy (low, medium, high)')
     .option('-y, --yes', 'Skip confirmation prompts')
     .option('--non-interactive', 'Run in non-interactive mode (requires --cloud and --strategy)')
-    .option('--ai', 'Enable AI-powered deep analysis (requires ANTHROPIC_API_KEY)')
-    .action(async (url: string, options: { cloud?: string; strategy?: string; yes?: boolean; nonInteractive?: boolean; ai?: boolean }) => {
+    .option('--ai', 'Enable AI-powered deep analysis (requires ANTHROPIC_API_KEY or Ollama)')
+    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
+    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
+    .option('--backend <strategy>', 'BaaS backend: self-hosted, keep-vendor, or migrate-vendor')
+    .action(async (url: string, options: { cloud?: string; strategy?: string; yes?: boolean; nonInteractive?: boolean; ai?: boolean; provider?: string; model?: string; backend?: string }) => {
       showBanner();
 
       // Validate URL
@@ -50,15 +55,25 @@ export function createDeployCommand(): Command {
 
       // Optional AI analysis
       if (useAI) {
-        if (!AIAnalyzerAgent.isAvailable()) {
-          logger.warn('ANTHROPIC_API_KEY not set — skipping AI analysis.');
+        const providerType = (options.provider ??
+          (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
+
+        const providerConfig: ProviderConfig = {
+          provider: providerType,
+          apiKey: process.env['ANTHROPIC_API_KEY'],
+          ollamaHost: process.env['OLLAMA_HOST'],
+          analysisModel: options.model,
+        };
+
+        if (!AIAnalyzerAgent.isAvailable(providerConfig)) {
+          logger.warn('No AI provider available. Set ANTHROPIC_API_KEY or ensure Ollama is running.');
         } else {
           const aiSpinner = createSpinner('Running AI deep analysis...');
           aiSpinner.start();
           try {
             const repoPath = context.get<string>('repoPath')!;
             const aiAgent = new AIAnalyzerAgent();
-            const enhanced = await aiAgent.execute({ repoUrl: url, repoPath, blueprint }, context);
+            const enhanced = await aiAgent.execute({ repoUrl: url, repoPath, blueprint, providerConfig }, context);
             if (enhanced.aiAnalysis) {
               aiSpinner.succeed('AI analysis complete');
               showAIAnalysis(enhanced.aiAnalysis);
@@ -74,6 +89,34 @@ export function createDeployCommand(): Command {
         const repoIsTemp = context.get<boolean>('repoIsTemp');
         if (repoPath && repoIsTemp) {
           await cleanupDir(repoPath);
+        }
+      }
+
+      // Step 1.5: BaaS migration decision
+      let migrationChoice: BaaSMigrationChoice | undefined;
+
+      if (blueprint.baas?.isBaaSApp) {
+        const migrationOptions = generateMigrationOptions(blueprint);
+        showBaaSMigrationInfo(blueprint, migrationOptions);
+
+        if (options.backend) {
+          const parsed = parseBackendFlag(options.backend);
+          if (!parsed) {
+            logger.error(`Invalid backend: ${options.backend}. Use self-hosted, keep-vendor, or migrate-vendor.`);
+            process.exit(1);
+          }
+          const match = migrationOptions.find(o => o.strategy === parsed);
+          migrationChoice = match
+            ? { strategy: match.strategy, vendor: match.vendor, handledFeatures: match.handledFeatures }
+            : { strategy: 'self-hosted', handledFeatures: [] };
+        } else if (nonInteractive) {
+          migrationChoice = { strategy: 'self-hosted', handledFeatures: [] };
+        } else {
+          migrationChoice = await selectBaaSStrategy(migrationOptions);
+        }
+
+        if (migrationChoice.vendor) {
+          showSubscriptionSteps(migrationChoice.vendor);
         }
       }
 
@@ -100,7 +143,7 @@ export function createDeployCommand(): Command {
       planSpinner.start();
 
       const infraAgent = new InfraPlannerAgent();
-      const { strategies } = await infraAgent.execute({ blueprint, provider }, context);
+      const { strategies } = await infraAgent.execute({ blueprint, provider, migrationChoice }, context);
 
       planSpinner.succeed('Infrastructure plans ready');
       showStrategyComparison(strategies);

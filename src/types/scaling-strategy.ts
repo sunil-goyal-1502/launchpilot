@@ -66,6 +66,15 @@ export interface NetworkResource {
 
 export type SecurityTier = 'basic' | 'standard' | 'advanced';
 
+export interface VendorSubscription {
+  vendorName: string;
+  pricingTier: string;
+  monthlyEstimate: number;
+  features: string[];
+  requiredEnvVars: string[];
+  signupUrl: string;
+}
+
 export interface ScalingStrategy {
   tier: StrategyTier;
   name: string;
@@ -79,6 +88,7 @@ export interface ScalingStrategy {
   auth?: AuthResource;
   objectStorage?: ObjectStorageResource;
   baasReplacements?: Array<{ original: string; feature: string; replacement: string }>;
+  vendorSubscription?: VendorSubscription;
   network: NetworkResource;
   securityTier: SecurityTier;
   costBreakdown?: CostBreakdown;

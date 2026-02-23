@@ -1,4 +1,5 @@
-import { ApplicationBlueprint, AppType } from '../../types/index.js';
+import { ApplicationBlueprint, AppType, BaaSMigrationChoice } from '../../types/index.js';
+import { shouldProvisionResource } from './baas-migration.js';
 
 export interface BaseRequirements {
   needsDatabase: boolean;
@@ -109,7 +110,7 @@ const APP_TYPE_REQUIREMENTS: Record<AppType, BaseRequirements> = {
   },
 };
 
-export function mapRequirements(blueprint: ApplicationBlueprint): BaseRequirements {
+export function mapRequirements(blueprint: ApplicationBlueprint, migrationChoice?: BaaSMigrationChoice): BaseRequirements {
   const base = { ...APP_TYPE_REQUIREMENTS[blueprint.appType], baasReplacements: [] as Array<{ original: string; feature: string; replacement: string }> };
 
   // Override DB engine based on detected databases
@@ -143,6 +144,7 @@ export function mapRequirements(blueprint: ApplicationBlueprint): BaseRequiremen
   if (blueprint.baas?.isBaaSApp) {
     for (const provider of blueprint.baas.providers) {
       for (const feature of provider.features) {
+        if (!shouldProvisionResource(feature, migrationChoice)) continue;
         switch (feature) {
           case 'database':
             base.needsDatabase = true;

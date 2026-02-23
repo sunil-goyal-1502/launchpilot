@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import boxen from 'boxen';
-import { ApplicationBlueprint, ScalingStrategy, SecurityPolicy, DeployResult, AIAnalysis } from '../types/index.js';
+import { ApplicationBlueprint, ScalingStrategy, SecurityPolicy, DeployResult, AIAnalysis, BaaSMigrationOption, BaaSVendorInfo } from '../types/index.js';
 
 export function showBanner(): void {
   const banner = boxen(
@@ -305,6 +305,49 @@ export function showAIAnalysis(analysis: AIAnalysis): void {
   console.log('');
   console.log(chalk.dim(`  AI Stats: ${analysis.analyzedFiles} files, ${analysis.totalChunks} chunks`));
   console.log(chalk.dim(`  Tokens: ${analysis.tokenUsage.inputTokens} in / ${analysis.tokenUsage.outputTokens} out (~$${analysis.tokenUsage.estimatedCostUSD.toFixed(4)})`));
+  console.log('');
+}
+
+export function showBaaSMigrationInfo(blueprint: ApplicationBlueprint, options: BaaSMigrationOption[]): void {
+  if (!blueprint.baas?.isBaaSApp || blueprint.baas.providers.length === 0) return;
+
+  const primary = blueprint.baas.providers[0]!;
+  console.log('');
+  console.log(chalk.bold.white('  BaaS Migration Strategy'));
+  console.log(chalk.dim(`  ${'─'.repeat(45)}`));
+  console.log('');
+  console.log(`  Detected: ${chalk.magenta(primary.name)} (${primary.features.join(', ')})`);
+  console.log('');
+
+  if (options.length > 0) {
+    console.log(chalk.dim('  Available options:'));
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i]!;
+      const idx = chalk.dim(`  ${i + 1}.`);
+      const label = chalk.white(opt.label);
+      console.log(`${idx} ${label}`);
+      console.log(chalk.dim(`     ${opt.description}`));
+    }
+    console.log('');
+  }
+}
+
+export function showSubscriptionSteps(vendor: BaaSVendorInfo): void {
+  console.log('');
+  console.log(chalk.bold.white(`  Vendor Setup: ${vendor.name} (${vendor.pricingTier})`));
+  console.log(chalk.dim(`  ${'─'.repeat(45)}`));
+  console.log('');
+
+  console.log(chalk.dim('  Steps:'));
+  for (let i = 0; i < vendor.setupSteps.length; i++) {
+    console.log(`  ${chalk.dim(`${i + 1}.`)} ${vendor.setupSteps[i]}`);
+  }
+
+  console.log('');
+  console.log(chalk.dim('  Required env vars (provide before deployment):'));
+  for (const envVar of vendor.requiredEnvVars) {
+    console.log(`    ${chalk.yellow(envVar)}`);
+  }
   console.log('');
 }
 
