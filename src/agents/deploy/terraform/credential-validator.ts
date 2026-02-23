@@ -4,10 +4,13 @@
  */
 
 import { execFile } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface TerraformCheckResult {
   installed: boolean;
   version?: string;
+  path?: string;
   error?: string;
 }
 
@@ -17,12 +20,75 @@ export interface AWSCredentialResult {
   error?: string;
 }
 
+/** Cached resolved path for terraform binary */
+let resolvedTerraformPath: string | null = null;
+
+/**
+ * Resolves the terraform binary path — checks PATH first, then common
+ * Windows installation locations (WinGet, Chocolatey, scoop, manual).
+ */
+function findTerraformBinary(): string {
+  if (resolvedTerraformPath) return resolvedTerraformPath;
+
+  // Default: rely on PATH
+  const defaultBin = process.platform === 'win32' ? 'terraform.exe' : 'terraform';
+
+  if (process.platform !== 'win32') {
+    resolvedTerraformPath = 'terraform';
+    return resolvedTerraformPath;
+  }
+
+  // On Windows, search common installation directories
+  const home = process.env['USERPROFILE'] ?? process.env['HOME'] ?? '';
+  const candidates: string[] = [];
+
+  // WinGet packages — directory name varies, so scan for it
+  const wingetPkgsDir = join(home, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages');
+  try {
+    const entries = readdirSync(wingetPkgsDir);
+    for (const entry of entries) {
+      if (entry.toLowerCase().includes('terraform')) {
+        candidates.push(join(wingetPkgsDir, entry, 'terraform.exe'));
+      }
+    }
+  } catch { /* WinGet dir may not exist */ }
+
+  // Other common locations
+  candidates.push(
+    join(home, 'AppData', 'Local', 'Programs', 'Terraform', 'terraform.exe'),
+    join(home, 'scoop', 'shims', 'terraform.exe'),
+    'C:\\ProgramData\\chocolatey\\bin\\terraform.exe',
+    'C:\\HashiCorp\\Terraform\\terraform.exe',
+  );
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      resolvedTerraformPath = candidate;
+      return resolvedTerraformPath;
+    }
+  }
+
+  // Fall back to bare name (will use PATH)
+  resolvedTerraformPath = defaultBin;
+  return resolvedTerraformPath;
+}
+
+/**
+ * Returns the resolved terraform binary path. Exported so TerraformExecutor
+ * can use the same resolved path.
+ */
+export function getTerraformPath(): string {
+  return findTerraformBinary();
+}
+
 /**
  * Checks whether `terraform` is on PATH and returns its version.
  */
 export function checkTerraformInstalled(): Promise<TerraformCheckResult> {
+  const tfBin = findTerraformBinary();
+
   return new Promise((resolve) => {
-    execFile('terraform', ['version', '-json'], { timeout: 10_000 }, (err, stdout) => {
+    execFile(tfBin, ['version', '-json'], { timeout: 10_000 }, (err, stdout) => {
       if (err) {
         resolve({
           installed: false,
@@ -36,6 +102,7 @@ export function checkTerraformInstalled(): Promise<TerraformCheckResult> {
         resolve({
           installed: true,
           version: parsed.terraform_version ?? stdout.trim().split('\n')[0],
+          path: tfBin,
         });
       } catch {
         // Fallback: parse plain text output
@@ -43,6 +110,7 @@ export function checkTerraformInstalled(): Promise<TerraformCheckResult> {
         resolve({
           installed: true,
           version: match?.[1] ?? 'unknown',
+          path: tfBin,
         });
       }
     });

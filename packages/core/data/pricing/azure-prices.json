@@ -1,0 +1,60 @@
+{
+  "provider": "azure",
+  "region": "eastus",
+  "lastUpdated": "2025-01-15",
+  "compute": {
+    "B1s": { "vCPUs": 1, "memoryGB": 1, "hourlyPrice": 0.0104 },
+    "B2s": { "vCPUs": 2, "memoryGB": 4, "hourlyPrice": 0.0416 },
+    "D2s_v5": { "vCPUs": 2, "memoryGB": 8, "hourlyPrice": 0.096 },
+    "D4s_v5": { "vCPUs": 4, "memoryGB": 16, "hourlyPrice": 0.192 },
+    "D8s_v5": { "vCPUs": 8, "memoryGB": 32, "hourlyPrice": 0.384 },
+    "F2s_v2": { "vCPUs": 2, "memoryGB": 4, "hourlyPrice": 0.085 },
+    "F4s_v2": { "vCPUs": 4, "memoryGB": 8, "hourlyPrice": 0.17 }
+  },
+  "database": {
+    "B_Standard_B1s": { "hourlyPrice": 0.017 },
+    "B_Standard_B2s": { "hourlyPrice": 0.034 },
+    "GP_Standard_D2ds_v4": { "hourlyPrice": 0.124 },
+    "GP_Standard_D4ds_v4": { "hourlyPrice": 0.248 },
+    "BC_Standard_D2ds_v4": { "hourlyPrice": 0.248 }
+  },
+  "storage": {
+    "premiumSSDPerGB": 0.132,
+    "standardSSDPerGB": 0.075,
+    "blobPerGB": 0.018
+  },
+  "network": {
+    "appGatewayHourly": 0.0246,
+    "appGatewayPerCU": 0.008,
+    "frontDoorPerGB": 0.087,
+    "natGatewayHourly": 0.045,
+    "natGatewayPerGB": 0.045,
+    "publicIPMonthly": 3.65
+  },
+  "security": {
+    "wafPolicyMonthly": 5.0,
+    "wafRuleMonthly": 1.0,
+    "wafRequestsPer10k": 0.0006,
+    "ddosProtectionMonthly": 2944.0
+  },
+  "services": {
+    "cache": {
+      "C0": { "hourlyPrice": 0.022 },
+      "C1": { "hourlyPrice": 0.055 },
+      "P1": { "hourlyPrice": 0.211 }
+    },
+    "queue": {
+      "serviceBusPerMillion": 0.05,
+      "serviceBusPremiumHourly": 0.928
+    },
+    "streaming": {
+      "eventHubsPerMillion": 0.028,
+      "eventHubsTUHourly": 0.03
+    }
+  },
+  "other": {
+    "keyVaultPerOperation": 0.03,
+    "logAnalyticsPerGB": 2.76,
+    "dnsZoneMonthly": 0.50
+  }
+}

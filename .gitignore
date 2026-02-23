@@ -3,3 +3,17 @@ dist/
 *.tsbuildinfo
 data/launchpilot.db
 .env
+
+# Web app SQLite DB (runtime data)
+launchpilot-web.db
+launchpilot-web.db-shm
+launchpilot-web.db-wal
+
+# Next.js
+packages/web/.next/
+
+# AI memory / plugin state
+.ai-memory/
+
+# Terraform output
+launchpilot-infra/

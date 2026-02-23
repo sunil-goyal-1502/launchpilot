@@ -7,6 +7,7 @@
 
 import { spawn, execFile } from 'node:child_process';
 import { TerraformOutputs } from './resource-map.js';
+import { getTerraformPath } from './credential-validator.js';
 
 export interface TerraformEvent {
   type:
@@ -81,7 +82,7 @@ export class TerraformExecutor {
    */
   async apply(): Promise<TerraformOutputs> {
     return new Promise<TerraformOutputs>((resolve, reject) => {
-      const proc = spawn('terraform', ['apply', '-json', '-auto-approve', 'tfplan'], {
+      const proc = spawn(getTerraformPath(), ['apply', '-json', '-auto-approve', 'tfplan'], {
         cwd: this.workDir,
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: true,
@@ -151,7 +152,7 @@ export class TerraformExecutor {
    */
   private getOutputs(): Promise<TerraformOutputs> {
     return new Promise((resolve, reject) => {
-      execFile('terraform', ['output', '-json'], { cwd: this.workDir, timeout: 30_000 }, (err, stdout) => {
+      execFile(getTerraformPath(), ['output', '-json'], { cwd: this.workDir, timeout: 30_000 }, (err, stdout) => {
         if (err) {
           // No outputs is okay — return empty
           resolve({});
@@ -210,7 +211,7 @@ export class TerraformExecutor {
    */
   private runCommand(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile('terraform', args, { cwd: this.workDir, timeout: this.timeout }, (err, stdout, stderr) => {
+      execFile(getTerraformPath(), args, { cwd: this.workDir, timeout: this.timeout }, (err, stdout, stderr) => {
         if (err) {
           reject(new Error(`terraform ${args[0]} failed: ${stderr || err.message}`));
           return;

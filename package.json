@@ -1,14 +1,18 @@
 {
   "name": "launchpilot",
   "version": "0.1.0",
+  "private": true,
   "description": "CLI tool that analyzes GitHub repos and deploys to AWS/GCP/Azure with security hardening and cost optimization",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
-    "launchpilot": "./dist/bin/launchpilot.js"
+    "launchpilot": "./packages/cli/bin/launchpilot.ts"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx bin/launchpilot.ts",
+    "build": "npm run build --workspaces --if-present",
+    "dev": "tsx packages/cli/bin/launchpilot.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
