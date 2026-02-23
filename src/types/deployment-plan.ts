@@ -24,6 +24,8 @@ export interface DeployResult {
   checkpoints: Checkpoint[];
   totalDuration: number;
   resources: DeployedResource[];
+  mode?: 'simulation' | 'live';
+  infraDir?: string;
 }
 
 export interface DeployedResource {

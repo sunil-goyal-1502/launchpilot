@@ -186,19 +186,28 @@ export function showDeploymentResult(result: DeployResult): void {
   console.log('');
 
   if (result.success) {
-    const successBox = boxen(
-      chalk.bold.green('Deployment Successful!') + '\n\n' +
+    let boxContent =
+      chalk.bold.green(result.mode === 'live' ? 'Live Deployment Successful!' : 'Deployment Successful!') + '\n\n' +
       chalk.dim('Deployment ID: ') + chalk.white(result.deploymentId) + '\n' +
       chalk.dim('Provider:      ') + chalk.white(result.provider.toUpperCase()) + '\n' +
       chalk.dim('Duration:      ') + chalk.white(`${(result.totalDuration / 1000).toFixed(1)}s`) + '\n' +
       chalk.dim('Resources:     ') + chalk.white(`${result.resources.length} created`) + '\n\n' +
       chalk.dim('App URL:       ') + chalk.cyan.underline(result.url) + '\n' +
-      chalk.dim('Dashboard:     ') + chalk.cyan.underline(result.dashboardUrl),
+      chalk.dim('Dashboard:     ') + chalk.cyan.underline(result.dashboardUrl);
+
+    if (result.mode === 'live' && result.infraDir) {
+      boxContent += '\n\n' +
+        chalk.dim('Infra Dir:     ') + chalk.white(result.infraDir) + '\n' +
+        chalk.yellow.bold('Resources are LIVE and incurring costs.') + '\n' +
+        chalk.dim('To tear down:  ') + chalk.white('launchpilot deploy <url> --destroy');
+    }
+
+    const successBox = boxen(boxContent,
       {
         padding: 1,
         margin: { top: 0, bottom: 1, left: 2, right: 0 },
         borderStyle: 'round',
-        borderColor: 'green',
+        borderColor: result.mode === 'live' ? 'yellow' : 'green',
       }
     );
     console.log(successBox);

@@ -15,7 +15,11 @@ import { createSpinner, createProgressBar } from '../progress.js';
 import { selectCloud, selectStrategy, confirmDeployment, parseCloudFlag, parseStrategyFlag, selectBaaSStrategy, parseBackendFlag } from '../prompts.js';
 import { CloudProvider, StrategyTier, BaaSMigrationChoice } from '../../types/index.js';
 import { generateMigrationOptions } from '../../agents/infra-planner/baas-migration.js';
+import { checkTerraformInstalled, validateAWSCredentials } from '../../agents/deploy/terraform/credential-validator.js';
+import { TerraformExecutor } from '../../agents/deploy/terraform/executor.js';
 import { logger } from '../../utils/logger.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export function createDeployCommand(): Command {
   return new Command('deploy')
@@ -29,8 +33,55 @@ export function createDeployCommand(): Command {
     .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
     .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
     .option('--backend <strategy>', 'BaaS backend: self-hosted, keep-vendor, or migrate-vendor')
-    .action(async (url: string, options: { cloud?: string; strategy?: string; yes?: boolean; nonInteractive?: boolean; ai?: boolean; provider?: string; model?: string; backend?: string }) => {
+    .option('--live', 'Execute real AWS deployment via Terraform (costs will be incurred)')
+    .option('--destroy', 'Destroy previously deployed infrastructure in launchpilot-infra/')
+    .action(async (url: string, options: { cloud?: string; strategy?: string; yes?: boolean; nonInteractive?: boolean; ai?: boolean; provider?: string; model?: string; backend?: string; live?: boolean; destroy?: boolean }) => {
       showBanner();
+
+      // ── Destroy shortcut: skip analysis, just tear down ──
+      if (options.destroy) {
+        const infraDir = join(process.cwd(), 'launchpilot-infra');
+        if (!existsSync(infraDir)) {
+          logger.error('No launchpilot-infra/ directory found. Nothing to destroy.');
+          process.exit(1);
+        }
+
+        const tfCheck = await checkTerraformInstalled();
+        if (!tfCheck.installed) {
+          logger.error(tfCheck.error ?? 'Terraform CLI not found');
+          process.exit(1);
+        }
+
+        console.log(chalk.yellow.bold('\n  ⚠ Destroying infrastructure in launchpilot-infra/\n'));
+
+        if (!options.yes) {
+          const { confirm } = await import('@inquirer/prompts');
+          const confirmed = await confirm({ message: 'Are you sure you want to destroy all deployed resources?' });
+          if (!confirmed) {
+            logger.info('Destroy cancelled.');
+            return;
+          }
+        }
+
+        const destroySpinner = createSpinner('Destroying infrastructure...');
+        destroySpinner.start();
+
+        try {
+          const executor = new TerraformExecutor({
+            workDir: infraDir,
+            onEvent: (e) => {
+              if (e.type === 'error') logger.error(e.message);
+            },
+          });
+          await executor.destroy();
+          destroySpinner.succeed('Infrastructure destroyed successfully');
+          console.log(chalk.dim('  Resources have been torn down. No further costs will be incurred.'));
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          destroySpinner.fail(`Destroy failed: ${msg}`);
+        }
+        return;
+      }
 
       // Validate URL
       const validation = validateRepoUrl(url);
@@ -189,13 +240,50 @@ export function createDeployCommand(): Command {
       }
 
       // Step 7: Deploy
+      const isLive = options.live ?? false;
+
+      // Pre-flight validation for live mode
+      if (isLive) {
+        const tfCheck = await checkTerraformInstalled();
+        if (!tfCheck.installed) {
+          logger.error(tfCheck.error ?? 'Terraform CLI not found');
+          logger.info('Install Terraform: https://developer.hashicorp.com/terraform/install');
+          process.exit(1);
+        }
+        console.log(chalk.dim(`  Terraform ${tfCheck.version} detected`));
+
+        const awsCheck = await validateAWSCredentials();
+        if (!awsCheck.valid) {
+          logger.error(awsCheck.error ?? 'AWS credentials not configured');
+          logger.info('Run `aws configure` or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY');
+          process.exit(1);
+        }
+        console.log(chalk.dim(`  AWS identity: ${awsCheck.identity}`));
+
+        // Show live deployment warning
+        console.log('');
+        console.log(chalk.yellow.bold('  ⚠ LIVE DEPLOYMENT'));
+        console.log(chalk.yellow('  Real AWS resources will be created. Costs will be incurred.'));
+        console.log(chalk.yellow('  To tear down: launchpilot deploy <url> --destroy'));
+        console.log('');
+
+        if (!options.yes && !nonInteractive) {
+          const { confirm } = await import('@inquirer/prompts');
+          const confirmed = await confirm({ message: 'Proceed with live AWS deployment?' });
+          if (!confirmed) {
+            logger.info('Live deployment cancelled.');
+            return;
+          }
+        }
+      }
+
       console.log('');
       const repoName = extractRepoName(url);
       const deployAgent = new DeployAgent();
 
       // Set up progress bar
       const totalCheckpoints = getCheckpointCount(provider, selectedStrategy);
-      const bar = createProgressBar(totalCheckpoints, 'Deploying');
+      const bar = createProgressBar(totalCheckpoints, isLive ? 'Deploying (live)' : 'Deploying');
 
       let completedCount = 0;
       deployAgent.setCheckpointCallback((checkpoint, index, total) => {
@@ -208,7 +296,7 @@ export function createDeployCommand(): Command {
       });
 
       const result = await deployAgent.execute(
-        { repoName, provider, strategy: selectedStrategy, security },
+        { repoName, provider, strategy: selectedStrategy, security, live: isLive },
         context,
       );
 

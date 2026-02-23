@@ -11,6 +11,7 @@ export interface PipelineOptions {
   provider: CloudProvider;
   strategyTier: StrategyTier;
   nonInteractive?: boolean;
+  live?: boolean;
 }
 
 export interface PipelineResult {
@@ -50,11 +51,11 @@ export class DeploymentPipeline {
       context,
     );
 
-    // 5. Deploy — simulated deployment
+    // 5. Deploy
     const deployAgent = new DeployAgent();
     const repoName = extractRepoName(options.repoUrl);
     const deployResult = await deployAgent.execute(
-      { repoName, provider: options.provider, strategy: selectedStrategy, security },
+      { repoName, provider: options.provider, strategy: selectedStrategy, security, live: options.live },
       context,
     );
 
