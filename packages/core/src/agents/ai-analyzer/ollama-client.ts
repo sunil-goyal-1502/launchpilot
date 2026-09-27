@@ -56,10 +56,11 @@ export class OllamaClient implements LLMProvider {
     systemPrompt: string,
     userMessage: string,
     model?: string,
+    options?: { maxOutputTokens?: number },
   ): Promise<{ result: T; usage: TokenUsage }> {
     const selectedModel = model ?? this.analysisModel;
 
-    const result = await this.chat(selectedModel, systemPrompt, userMessage, 8192);
+    const result = await this.chat(selectedModel, systemPrompt, userMessage, options?.maxOutputTokens ?? 8192);
     const jsonStr = extractJson(result.text);
     const parsed = JSON.parse(jsonStr) as T;
     const usage = this.trackUsage(selectedModel, result.promptTokens, result.completionTokens);

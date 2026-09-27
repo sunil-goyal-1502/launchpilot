@@ -3,27 +3,29 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowLeft, ArrowRight } from 'lucide-react';
-import type { ApplicationBlueprint, CloudProvider } from '@launchpilot/core';
+import { ArrowLeft } from 'lucide-react';
+import type { ApplicationBlueprint, CloudProvider, ArchitectureCloud, AIAnalysis } from '@launchpilot/core';
+import { EvidenceArchitecture } from '@/components/infrastructure/evidence-architecture';
+import type { ArchitectureReviewResponse } from '@/lib/api-client';
 
 interface StepBlueprintProps {
   blueprint: ApplicationBlueprint;
+  cloudProvider: ArchitectureCloud;
+  aiAnalysis?: AIAnalysis | null;
+  aiError?: string;
+  architectureReview?: ArchitectureReviewResponse;
+  architectureUnitIds?: string[];
   onNext: (provider: CloudProvider) => void;
   loading: boolean;
   onBack: () => void;
 }
 
-const PROVIDERS: { id: CloudProvider; name: string; color: string }[] = [
-  { id: 'aws' as CloudProvider, name: 'Amazon Web Services', color: 'bg-orange-500' },
-  { id: 'gcp' as CloudProvider, name: 'Google Cloud Platform', color: 'bg-blue-500' },
-  { id: 'azure' as CloudProvider, name: 'Microsoft Azure', color: 'bg-sky-500' },
-];
-
-export function StepBlueprint({ blueprint, onNext, loading, onBack }: StepBlueprintProps) {
+export function StepBlueprint({ blueprint, cloudProvider, aiAnalysis, aiError, architectureReview, architectureUnitIds, onNext, loading, onBack }: StepBlueprintProps) {
   return (
     <div className="space-y-6">
-      {/* Blueprint summary */}
-      <Card>
+      {blueprint.architecture && <EvidenceArchitecture key={blueprint.architecture.id} graph={blueprint.architecture} initialCloud={cloudProvider} initialReview={architectureReview} initialUnitIds={architectureUnitIds} />}
+      <details className="rounded-lg border p-4"><summary className="cursor-pointer text-sm font-medium">Code analysis and technology stack</summary>
+      <Card className="mt-4">
         <CardHeader>
           <CardTitle>Application Blueprint</CardTitle>
           <CardDescription>Detected technology stack and configuration</CardDescription>
@@ -79,37 +81,33 @@ export function StepBlueprint({ blueprint, onNext, loading, onBack }: StepBluepr
         </CardContent>
       </Card>
 
-      {/* Cloud provider selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Select Cloud Provider</CardTitle>
-          <CardDescription>Choose where to deploy your infrastructure</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 gap-4">
-            {PROVIDERS.map(p => (
-              <Button
-                key={p.id}
-                variant="outline"
-                className="h-auto flex-col gap-2 p-6"
-                onClick={() => onNext(p.id)}
-                disabled={loading}
-              >
-                <div className={`h-3 w-3 rounded-full ${p.color}`} />
-                <span className="font-medium">{p.id.toUpperCase()}</span>
-                <span className="text-xs text-muted-foreground">{p.name}</span>
-              </Button>
-            ))}
-          </div>
+      {aiError && <p role="alert" className="rounded-lg border p-4 text-sm">AI review unavailable: {aiError}</p>}
+      {aiAnalysis && (
+        <Card>
+          <CardHeader>
+            <CardTitle>AI Code Review</CardTitle>
+            <CardDescription>{aiAnalysis.tokenUsage.model} · {aiAnalysis.analyzedFiles} files reviewed · {aiAnalysis.architecturePattern}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p>{aiAnalysis.appPurpose}</p>
+            {aiAnalysis.securityConcerns.length > 0 && (
+              <div>
+                <h3 className="font-medium">Security concerns</h3>
+                <ul className="mt-2 space-y-3">
+                  {aiAnalysis.securityConcerns.map((item, i) => (
+                    <li key={i}>
+                      <Badge variant="outline">{item.severity}</Badge> {item.description}
+                      <p className="text-muted-foreground">{item.file ? `${item.file}: ` : ''}{item.recommendation}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
-          {loading && (
-            <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Generating infrastructure plans...
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      </details>
 
       <div className="flex justify-between">
         <Button variant="ghost" onClick={onBack}>

@@ -6,6 +6,7 @@ import { detectStack } from './detector';
 import { cleanupDir } from '../../utils/fs-helpers';
 import { extractRepoName } from '../../utils/validator';
 import { simulateWork } from '../../utils/timer';
+import { scanRepositoryArchitecture } from '../../architecture/scanner';
 
 export interface IngestionInput {
   repoUrl: string;
@@ -35,6 +36,7 @@ export class IngestionAgent extends BaseAgent<IngestionInput, ApplicationBluepri
         await simulateWork(600, 300);
         return detectStack(cloneResult.localPath, input.repoUrl, repoName);
       });
+      blueprint.architecture = await this.timed(context, 'resource-evidence', () => scanRepositoryArchitecture(cloneResult.localPath, input.repoUrl));
 
       // Store in context for downstream agents
       context.set('blueprint', blueprint);

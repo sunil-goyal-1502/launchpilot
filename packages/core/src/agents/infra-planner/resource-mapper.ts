@@ -112,11 +112,15 @@ const APP_TYPE_REQUIREMENTS: Record<AppType, BaseRequirements> = {
 
 export function mapRequirements(blueprint: ApplicationBlueprint, migrationChoice?: BaaSMigrationChoice): BaseRequirements {
   const base = { ...APP_TYPE_REQUIREMENTS[blueprint.appType], baasReplacements: [] as Array<{ original: string; feature: string; replacement: string }> };
+  // Application shape does not establish a database dependency.
+  base.needsDatabase = false;
+  base.dbEngine = 'none';
 
   // Override DB engine based on detected databases
-  if (blueprint.databases.length > 0) {
+  const provisionableDb = blueprint.databases.find(db => ['postgresql', 'mysql', 'mongodb'].includes(db.type));
+  if (provisionableDb) {
     base.needsDatabase = true;
-    const primaryDb = blueprint.databases[0]!;
+    const primaryDb = provisionableDb;
     base.dbEngine = primaryDb.type === 'mongodb' ? 'mongodb'
       : primaryDb.type === 'mysql' ? 'mysql'
       : 'postgresql';

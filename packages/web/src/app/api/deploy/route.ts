@@ -21,6 +21,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    if (live) return NextResponse.json({ error: 'Live deployment of generic sizing scenarios is disabled. Generate and validate the selected architecture bundle from the repository review.' }, { status: 400 });
 
     const id = nanoid(12);
     const repoName = extractRepoName(repoUrl);

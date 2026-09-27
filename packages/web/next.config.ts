@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@launchpilot/core'],
-  serverExternalPackages: ['better-sqlite3', 'simple-git'],
+  // sql.js resolves its WASM file relative to the package at runtime.
+  serverExternalPackages: ['better-sqlite3', 'simple-git', 'sql.js'],
   turbopack: {
     root: resolve(__dirname, '../..'),
     resolveExtensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],

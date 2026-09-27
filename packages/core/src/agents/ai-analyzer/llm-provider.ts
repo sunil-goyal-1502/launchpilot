@@ -1,10 +1,11 @@
 import { TokenUsage } from '../../types/ai-analysis';
 import { ClaudeClient } from './claude-client';
 import { OllamaClient } from './ollama-client';
+import { CatalystClient } from './catalyst-client';
 
 /**
  * Provider-agnostic interface for LLM operations.
- * Implemented by ClaudeClient (Anthropic) and OllamaClient (local Ollama).
+ * Implemented by CatalystClient, ClaudeClient (Anthropic) and OllamaClient.
  */
 export interface LLMProvider {
   readonly providerName: string;
@@ -16,7 +17,7 @@ export interface LLMProvider {
   analyze(systemPrompt: string, userMessage: string, model?: string): Promise<{ text: string; usage: TokenUsage }>;
 
   /** Run analysis expecting JSON output. */
-  analyzeStructured<T>(systemPrompt: string, userMessage: string, model?: string): Promise<{ result: T; usage: TokenUsage }>;
+  analyzeStructured<T>(systemPrompt: string, userMessage: string, model?: string, options?: { maxOutputTokens?: number }): Promise<{ result: T; usage: TokenUsage }>;
 
   /** Generate a short summary for embedding. */
   generateChunkSummary(prompt: string): Promise<{ summary: string; usage: TokenUsage }>;
@@ -30,7 +31,7 @@ export interface LLMProvider {
 
 // ── Provider configuration ──
 
-export type ProviderType = 'anthropic' | 'ollama';
+export type ProviderType = 'catalyst' | 'anthropic' | 'ollama';
 
 export interface ProviderConfig {
   provider: ProviderType;
@@ -38,15 +39,22 @@ export interface ProviderConfig {
   ollamaHost?: string;      // Default: http://localhost:11434
   analysisModel?: string;   // Override default model
   embeddingModel?: string;  // Override default model
+  gatewayUrl?: string;
+  gatewayToken?: string;
+  gatewayKeyFile?: string;  // Local Compass credential reference, never shell-sourced
+  requestTimeoutMs?: number;
+  reasoningEffort?: string;
 }
 
 // ── Factory ──
 
 export function createLLMProvider(config: ProviderConfig): LLMProvider {
   switch (config.provider) {
+    case 'catalyst':
+      return new CatalystClient(config);
     case 'anthropic':
       if (!config.apiKey) throw new Error('ANTHROPIC_API_KEY is required for Anthropic provider');
-      return new ClaudeClient(config.apiKey);
+      return new ClaudeClient(config.apiKey, config.analysisModel, config.embeddingModel);
     case 'ollama':
       return new OllamaClient(config.ollamaHost, config.analysisModel, config.embeddingModel);
     default:

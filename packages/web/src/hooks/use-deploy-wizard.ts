@@ -9,13 +9,19 @@ import type {
   StrategyTier,
   CostBreakdown,
   BaaSMigrationChoice,
+  AIAnalysis,
+  ArchitectureCloud,
 } from '@launchpilot/core';
-import { analyzeRepo, estimateCosts, startDeploy } from '@/lib/api-client';
+import { analyzeRepo, estimateCosts, startDeploy, type ArchitectureReviewResponse } from '@/lib/api-client';
 
 export interface WizardState {
   step: number;
   repoUrl: string;
   blueprint: ApplicationBlueprint | null;
+  aiAnalysis: AIAnalysis | null;
+  aiError?: string;
+  architectureReview?: ArchitectureReviewResponse;
+  architectureUnitIds?: string[];
   provider: CloudProvider | null;
   strategies: ScalingStrategy[] | null;
   selectedStrategy: ScalingStrategy | null;
@@ -31,7 +37,8 @@ const INITIAL_STATE: WizardState = {
   step: 1,
   repoUrl: '',
   blueprint: null,
-  provider: null,
+  aiAnalysis: null,
+  provider: 'azure' as CloudProvider,
   strategies: null,
   selectedStrategy: null,
   security: null,
@@ -52,11 +59,11 @@ export function useDeployWizard() {
     setState(prev => ({ ...prev, repoUrl }));
   }, []);
 
-  const analyze = useCallback(async (repoUrl: string) => {
-    setState(prev => ({ ...prev, loading: true, error: null, repoUrl }));
+  const analyze = useCallback(async (repoUrl: string, ai = false, environment = 'production', cloudProvider: ArchitectureCloud = 'azure') => {
+    setState(prev => ({ ...prev, loading: true, error: null, aiAnalysis: null, aiError: undefined, repoUrl, provider: cloudProvider as CloudProvider }));
     try {
-      const { blueprint } = await analyzeRepo({ repoUrl });
-      setState(prev => ({ ...prev, blueprint, loading: false, step: 2 }));
+      const { blueprint, aiAnalysis, aiError, architectureReview, architectureScope } = await analyzeRepo({ repoUrl, ai, environment, cloudProvider });
+      setState(prev => ({ ...prev, blueprint, aiAnalysis, aiError, architectureReview, architectureUnitIds: architectureScope?.unitIds, loading: false, step: 2 }));
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       setState(prev => ({ ...prev, loading: false, error: msg }));

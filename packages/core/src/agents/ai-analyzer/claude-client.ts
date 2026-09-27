@@ -21,7 +21,8 @@ export class ClaudeClient implements LLMProvider {
   private client: Anthropic;
   private totalUsage: { inputTokens: number; outputTokens: number } = { inputTokens: 0, outputTokens: 0 };
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, private analysisModel = DEFAULT_AI_CONFIG.analysisModel,
+    private summaryModel = DEFAULT_AI_CONFIG.embeddingModel) {
     this.client = new Anthropic({ apiKey });
   }
 
@@ -34,7 +35,7 @@ export class ClaudeClient implements LLMProvider {
   async validateApiKey(): Promise<boolean> {
     try {
       await this.client.messages.create({
-        model: DEFAULT_AI_CONFIG.embeddingModel,
+        model: this.summaryModel,
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Hi' }],
       });
@@ -51,7 +52,7 @@ export class ClaudeClient implements LLMProvider {
     userMessage: string,
     model?: string,
   ): Promise<{ text: string; usage: TokenUsage }> {
-    const selectedModel = model ?? DEFAULT_AI_CONFIG.analysisModel;
+    const selectedModel = model ?? this.analysisModel;
 
     const response = await this.withRetry(() =>
       this.client.messages.create({
@@ -78,13 +79,14 @@ export class ClaudeClient implements LLMProvider {
     systemPrompt: string,
     userMessage: string,
     model?: string,
+    options?: { maxOutputTokens?: number },
   ): Promise<{ result: T; usage: TokenUsage }> {
-    const selectedModel = model ?? DEFAULT_AI_CONFIG.analysisModel;
+    const selectedModel = model ?? this.analysisModel;
 
     const response = await this.withRetry(() =>
       this.client.messages.create({
         model: selectedModel,
-        max_tokens: 8192,
+        max_tokens: options?.maxOutputTokens ?? 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       }),
@@ -107,7 +109,7 @@ export class ClaudeClient implements LLMProvider {
   // ── Chunk summary generation (uses Haiku for cost efficiency) ──
 
   async generateChunkSummary(prompt: string): Promise<{ summary: string; usage: TokenUsage }> {
-    const model = DEFAULT_AI_CONFIG.embeddingModel;
+    const model = this.summaryModel;
 
     const response = await this.withRetry(() =>
       this.client.messages.create({
@@ -144,10 +146,10 @@ export class ClaudeClient implements LLMProvider {
     this.totalUsage.inputTokens += inputTokens;
     this.totalUsage.outputTokens += outputTokens;
 
-    const pricing = PRICING[model] ?? { input: 3, output: 15 };
-    const estimatedCostUSD =
+    const pricing = PRICING[model];
+    const estimatedCostUSD = pricing ?
       (inputTokens / 1_000_000) * pricing.input +
-      (outputTokens / 1_000_000) * pricing.output;
+      (outputTokens / 1_000_000) * pricing.output : null;
 
     return { inputTokens, outputTokens, model, estimatedCostUSD };
   }

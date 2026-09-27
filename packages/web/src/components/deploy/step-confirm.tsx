@@ -82,12 +82,13 @@ export function StepConfirm({
             <div>
               <Label className="text-sm font-medium">Live Deployment</Label>
               <p className="text-xs text-muted-foreground">
-                {live ? 'Real AWS resources will be created via Terraform' : 'Simulation mode — no real resources'}
+                Generate the selected architecture’s Terraform/Bicep bundle from the repository review for deployment. This sizing scenario is a simulation.
               </p>
             </div>
             <Button
               variant={live ? 'destructive' : 'outline'}
               size="sm"
+              disabled
               onClick={() => onToggleLive(!live)}
             >
               {live ? 'Live ON' : 'Simulation'}

@@ -77,6 +77,10 @@ export class VectorStore {
       CREATE INDEX IF NOT EXISTS idx_chunks_repo ON code_chunks(repo_url);
       CREATE INDEX IF NOT EXISTS idx_embeddings_repo ON chunk_embeddings(repo_url);
     `);
+    const columns = this.requireDb().exec('PRAGMA table_info(indexed_repos)')[0]?.values ?? [];
+    if (!columns.some(column => column[1] === 'analysis_fingerprint')) {
+      this.requireDb().run('ALTER TABLE indexed_repos ADD COLUMN analysis_fingerprint TEXT');
+    }
   }
 
   private requireDb(): Database {
@@ -115,6 +119,7 @@ export class VectorStore {
       indexedAt: new Date(row['indexed_at'] as string),
       totalChunks: row['total_chunks'] as number,
       totalFiles: row['total_files'] as number,
+      ...(row['analysis_fingerprint'] ? { analysisFingerprint: row['analysis_fingerprint'] as string } : {}),
     };
   }
 
@@ -127,9 +132,9 @@ export class VectorStore {
   upsertRepoIndex(repo: IndexedRepo): void {
     const db = this.requireDb();
     db.run(
-      `INSERT OR REPLACE INTO indexed_repos (repo_url, commit_hash, indexed_at, total_chunks, total_files)
-       VALUES (?, ?, ?, ?, ?)`,
-      [repo.repoUrl, repo.commitHash, repo.indexedAt.toISOString(), repo.totalChunks, repo.totalFiles],
+      `INSERT OR REPLACE INTO indexed_repos (repo_url, commit_hash, indexed_at, total_chunks, total_files, analysis_fingerprint)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [repo.repoUrl, repo.commitHash, repo.indexedAt.toISOString(), repo.totalChunks, repo.totalFiles, repo.analysisFingerprint ?? null],
     );
     this.persist();
   }

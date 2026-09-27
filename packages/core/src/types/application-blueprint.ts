@@ -1,3 +1,4 @@
+import type { RepositoryArchitecture } from './architecture';
 export type Runtime = 'node' | 'python' | 'java' | 'go' | 'ruby' | 'docker' | 'unknown';
 
 export type AppType =
@@ -106,6 +107,7 @@ export interface ApplicationBlueprint {
     frameworks: string[];
   }>;
   baas?: BaaSMetadata;
+  architecture?: RepositoryArchitecture;
 }
 
 // ── BaaS Migration Types ──

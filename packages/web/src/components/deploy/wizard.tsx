@@ -7,7 +7,7 @@ import { StepBlueprint } from './step-blueprint';
 import { StepCloud } from './step-cloud';
 import { StepConfirm } from './step-confirm';
 
-const STEP_LABELS = ['Repository', 'Blueprint', 'Cloud & Strategy', 'Confirm & Deploy'];
+const STEP_LABELS = ['Repository & cloud', 'Architecture'];
 
 export function DeployWizard() {
   const router = useRouter();
@@ -22,7 +22,7 @@ export function DeployWizard() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-7xl space-y-6">
       {/* Step indicator */}
       <div className="flex items-center gap-2">
         {STEP_LABELS.map((label, i) => {
@@ -60,6 +60,7 @@ export function DeployWizard() {
       {state.step === 1 && (
         <StepRepo
           repoUrl={state.repoUrl}
+          initialCloud={state.provider ?? 'azure'}
           onUrlChange={wizard.setRepoUrl}
           onAnalyze={wizard.analyze}
           loading={state.loading}
@@ -69,6 +70,11 @@ export function DeployWizard() {
       {state.step === 2 && state.blueprint && (
         <StepBlueprint
           blueprint={state.blueprint}
+          cloudProvider={state.provider ?? 'azure'}
+          aiAnalysis={state.aiAnalysis}
+          aiError={state.aiError}
+          architectureReview={state.architectureReview}
+          architectureUnitIds={state.architectureUnitIds}
           onNext={(provider) => wizard.estimate(provider)}
           loading={state.loading}
           onBack={() => wizard.setStep(1)}

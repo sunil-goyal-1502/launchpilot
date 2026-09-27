@@ -36,6 +36,9 @@ export class DeployAgent extends BaseAgent<DeployInput, DeployResult> {
 
   async execute(input: DeployInput, context: PipelineContext): Promise<DeployResult> {
     if (input.live) {
+      if (context.get<{ architecture?: unknown }>('blueprint')?.architecture) {
+        throw new Error('The legacy live-deploy scaffold does not implement the repository architecture. Generate the reviewed Terraform/Bicep bundle from the evidence-backed plan and validate it before deployment.');
+      }
       return this.executeLive(input, context);
     }
     return this.executeSimulation(input, context);

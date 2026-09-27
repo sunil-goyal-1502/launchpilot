@@ -4,7 +4,7 @@ import {
   validateRepoUrl, PipelineContext, IngestionAgent, AIAnalyzerAgent,
   cleanupDir, logger,
 } from '@launchpilot/core';
-import type { ProviderConfig, ProviderType } from '@launchpilot/core';
+import { resolveProviderConfig, formatAICost } from '@launchpilot/core';
 import { showBanner } from '../display.js';
 import { createSpinner } from '../progress.js';
 
@@ -12,9 +12,10 @@ export function createIndexCommand(): Command {
   return new Command('index')
     .description('Index a repository for semantic search (force re-index)')
     .argument('<url>', 'GitHub repository URL or local://path')
-    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
-    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
-    .action(async (url: string, options: { provider?: string; model?: string }) => {
+    .option('--provider <provider>', 'AI provider: catalyst, anthropic or ollama (auto-detected from environment)')
+    .option('--model <model>', 'Analysis and search model route')
+    .option('--summary-model <model>', 'Chat model for code chunk summaries (Catalyst defaults to --model)')
+    .action(async (url: string, options: { provider?: string; model?: string; summaryModel?: string }) => {
       showBanner();
 
       const validation = validateRepoUrl(url);
@@ -23,18 +24,10 @@ export function createIndexCommand(): Command {
         process.exit(1);
       }
 
-      const providerType = (options.provider ??
-        (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
+      const providerConfig = resolveProviderConfig(options);
 
-      const providerConfig: ProviderConfig = {
-        provider: providerType,
-        apiKey: process.env['ANTHROPIC_API_KEY'],
-        ollamaHost: process.env['OLLAMA_HOST'],
-        analysisModel: options.model,
-      };
-
-      if (providerType === 'anthropic' && !providerConfig.apiKey) {
-        logger.error('ANTHROPIC_API_KEY environment variable is required for Anthropic provider. Use --provider ollama for local models.');
+      if (providerConfig.provider === 'anthropic' && !providerConfig.apiKey) {
+        logger.error('ANTHROPIC_API_KEY is required for Anthropic. Configure Catalyst or use --provider ollama for local models.');
         process.exit(1);
       }
 
@@ -60,7 +53,7 @@ export function createIndexCommand(): Command {
         const repoPath = context.get<string>('repoPath')!;
         const aiAgent = new AIAnalyzerAgent();
         const enhanced = await aiAgent.execute(
-          { repoUrl: url, repoPath, blueprint, providerConfig },
+          { repoUrl: url, repoPath, blueprint, providerConfig, forceReindex: true },
           context,
         );
 
@@ -70,12 +63,13 @@ export function createIndexCommand(): Command {
           console.log(chalk.dim(`  Files analyzed: ${enhanced.aiAnalysis.analyzedFiles}`));
           console.log(chalk.dim(`  Chunks indexed: ${enhanced.aiAnalysis.totalChunks}`));
           console.log(chalk.dim(`  Architecture:   ${enhanced.aiAnalysis.architecturePattern}`));
-          console.log(chalk.dim(`  Cost:           ~$${enhanced.aiAnalysis.tokenUsage.estimatedCostUSD.toFixed(4)}`));
+          console.log(chalk.dim(`  Cost:           ${formatAICost(enhanced.aiAnalysis.tokenUsage.estimatedCostUSD)}`));
           console.log('');
           console.log(chalk.green(`  Ready for search: launchpilot search ${url} "<query>"`));
           console.log('');
         } else {
-          aiSpinner.fail('Indexing failed — no AI analysis returned');
+          aiSpinner.fail(enhanced.aiError ?? 'Indexing failed — no AI analysis returned');
+          process.exitCode = 1;
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

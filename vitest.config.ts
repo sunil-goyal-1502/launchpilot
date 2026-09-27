@@ -14,6 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@launchpilot/core': resolve(__dirname, 'packages/core/src/index.ts'),
+      '@': resolve(__dirname, 'packages/web/src'),
     },
   },
 });

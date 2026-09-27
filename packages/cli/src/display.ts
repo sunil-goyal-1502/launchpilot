@@ -1,3 +1,4 @@
+import { formatAICost } from '@launchpilot/core';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import boxen from 'boxen';
@@ -313,7 +314,7 @@ export function showAIAnalysis(analysis: AIAnalysis): void {
   // Token usage
   console.log('');
   console.log(chalk.dim(`  AI Stats: ${analysis.analyzedFiles} files, ${analysis.totalChunks} chunks`));
-  console.log(chalk.dim(`  Tokens: ${analysis.tokenUsage.inputTokens} in / ${analysis.tokenUsage.outputTokens} out (~$${analysis.tokenUsage.estimatedCostUSD.toFixed(4)})`));
+  console.log(chalk.dim(`  Tokens: ${analysis.tokenUsage.inputTokens} in / ${analysis.tokenUsage.outputTokens} out (${formatAICost(analysis.tokenUsage.estimatedCostUSD)})`));
   console.log('');
 }
 

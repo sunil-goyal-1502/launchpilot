@@ -1,13 +1,15 @@
+import { createHash } from 'node:crypto';
 import { BaseAgent } from '../base-agent';
 import { PipelineContext } from '../../orchestrator/context';
 import { ApplicationBlueprint } from '../../types/index';
-import { AIAnalysis, EnhancedBlueprint, DEFAULT_AI_CONFIG } from '../../types/ai-analysis';
+import { AIAnalysis, EnhancedBlueprint, DEFAULT_AI_CONFIG, DEFAULT_OLLAMA_CONFIG } from '../../types/ai-analysis';
 import { LLMProvider, ProviderConfig, createLLMProvider } from './llm-provider';
+import { resolveProviderConfig } from './provider-config';
 import { selectFiles } from './file-selector';
 import { chunkFiles } from './code-chunker';
 import { EmbeddingService } from './embedding-service';
 import { VectorStore } from './vector-store';
-import { ANALYSIS_SYSTEM_PROMPT, buildAnalysisUserMessage } from './prompts/analysis-prompt';
+import { ANALYSIS_SYSTEM_PROMPT, buildAnalysisUserMessage, analysisSchema } from './prompts/analysis-prompt';
 import type { AnalysisSchema } from './prompts/analysis-prompt';
 import { logger } from '../../utils/logger';
 
@@ -17,6 +19,8 @@ export interface AIAnalyzerInput {
   blueprint: ApplicationBlueprint;
   commitHash?: string;
   providerConfig?: ProviderConfig;
+  forceReindex?: boolean;
+  dbPath?: string;
 }
 
 export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprint> {
@@ -24,32 +28,41 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
   readonly description = 'Deep AI-powered code analysis with persistent vector indexing';
 
   /**
-   * Check if the AI analyzer can run (API key or Ollama available).
+   * Check configuration only; availability does not imply network connectivity.
    */
   static isAvailable(providerConfig?: ProviderConfig): boolean {
-    if (providerConfig?.provider === 'ollama') return true;
-    return !!process.env['ANTHROPIC_API_KEY'];
+    try {
+      createLLMProvider(providerConfig ?? resolveProviderConfig());
+      return true;
+    } catch { return false; }
   }
 
   async execute(input: AIAnalyzerInput, context: PipelineContext): Promise<EnhancedBlueprint> {
-    const providerConfig = input.providerConfig ?? {
-      provider: 'anthropic' as const,
-      apiKey: process.env['ANTHROPIC_API_KEY'],
-    };
-
-    if (providerConfig.provider === 'anthropic' && !providerConfig.apiKey) {
-      this.log(context, 'No ANTHROPIC_API_KEY — returning blueprint without AI analysis');
-      return { blueprint: input.blueprint, aiAnalysis: null };
-    }
-
     const commitHash = input.commitHash ?? 'unknown';
-    const store = new VectorStore();
+    const store = new VectorStore(input.dbPath);
 
     try {
+      const providerConfig = input.providerConfig ?? resolveProviderConfig();
+      const client = createLLMProvider(providerConfig);
       await store.initialize();
 
-      // Step 1: Cache check
-      const cached = store.getCachedAnalysis(input.repoUrl, commitHash);
+      // Select before checking the cache: callers may omit a commit or use local files.
+      const files = await this.timed(context, 'file-selection', async () => {
+        return selectFiles(input.repoPath, input.blueprint);
+      });
+      this.log(context, `Selected ${files.length} files for analysis`);
+      const userMessage = buildAnalysisUserMessage(input.blueprint, files);
+      const defaults = providerConfig.provider === 'ollama' ? DEFAULT_OLLAMA_CONFIG : DEFAULT_AI_CONFIG;
+      const cacheKey = createHash('sha256').update(JSON.stringify({
+        version: 2, commitHash, system: ANALYSIS_SYSTEM_PROMPT, userMessage,
+        provider: providerConfig.provider,
+        analysisModel: providerConfig.analysisModel ?? defaults.analysisModel,
+        summaryModel: providerConfig.embeddingModel ?? (providerConfig.provider === 'catalyst' ? providerConfig.analysisModel : defaults.embeddingModel),
+        endpoint: providerConfig.gatewayUrl ?? providerConfig.ollamaHost,
+        reasoningEffort: providerConfig.reasoningEffort,
+      })).digest('hex');
+      const cached = input.forceReindex || store.getIndexedRepo(input.repoUrl)?.analysisFingerprint !== cacheKey
+        ? null : store.getCachedAnalysis(input.repoUrl, cacheKey);
       if (cached) {
         this.log(context, 'Using cached AI analysis');
         logger.info('Using cached AI analysis');
@@ -58,24 +71,18 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
         return { blueprint: input.blueprint, aiAnalysis };
       }
 
-      const client = createLLMProvider(providerConfig);
-
-      // Step 2: File selection
-      const files = await this.timed(context, 'file-selection', async () => {
-        return selectFiles(input.repoPath, input.blueprint);
-      });
-      this.log(context, `Selected ${files.length} files for analysis`);
-
       // Step 3: Token estimate
       const totalChars = files.reduce((sum, f) => sum + f.content.length, 0);
       const estimatedTokens = client.estimateTokens(files.map(f => f.content).join('\n'));
       this.log(context, `Estimated input: ${estimatedTokens} tokens (~${totalChars} chars)`);
 
-      // Step 4: Deep analysis with Sonnet
-      const userMessage = buildAnalysisUserMessage(input.blueprint, files);
-      const { result: analysisResult, usage: analysisUsage } = await this.timed(context, 'deep-analysis', async () => {
+      // Step 4: Deep analysis using the selected provider and model.
+      const { result, usage: analysisUsage } = await this.timed(context, 'deep-analysis', async () => {
         return client.analyzeStructured<AnalysisSchema>(ANALYSIS_SYSTEM_PROMPT, userMessage);
       });
+      const parsed = analysisSchema.safeParse(result);
+      if (!parsed.success) throw new Error('AI analysis did not match the required blueprint schema');
+      const analysisResult = parsed.data;
       this.log(context, `Analysis complete (${analysisUsage.inputTokens} in / ${analysisUsage.outputTokens} out tokens)`);
 
       // Step 5: Chunking
@@ -84,7 +91,7 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
       });
       this.log(context, `Created ${chunks.length} semantic chunks`);
 
-      // Step 6: Embedding with Haiku
+      // Step 6: Summaries via the configured model, vectors generated locally.
       const embeddingService = new EmbeddingService(client);
       const embeddings = await this.timed(context, 'embedding', async () => {
         return embeddingService.embedChunks(chunks, (done, total) => {
@@ -103,6 +110,7 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
         store.upsertRepoIndex({
           repoUrl: input.repoUrl,
           commitHash,
+          analysisFingerprint: cacheKey,
           indexedAt: new Date(),
           totalChunks: chunks.length,
           totalFiles: uniqueFiles.size,
@@ -111,15 +119,13 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
 
       // Build final AIAnalysis
       const embUsage = embeddingService.getTokenUsage();
-      const isLocal = client.providerName === 'ollama';
-      const embeddingCost = isLocal ? 0 :
-        (embUsage.inputTokens / 1_000_000) * 0.80 +
-        (embUsage.outputTokens / 1_000_000) * 4;
+      const embeddingCost = embeddingService.getEstimatedCostUSD();
       const totalTokenUsage = {
         inputTokens: analysisUsage.inputTokens + embUsage.inputTokens,
         outputTokens: analysisUsage.outputTokens + embUsage.outputTokens,
         model: analysisUsage.model,
-        estimatedCostUSD: analysisUsage.estimatedCostUSD + embeddingCost,
+        estimatedCostUSD: analysisUsage.estimatedCostUSD === null || embeddingCost === null
+          ? null : analysisUsage.estimatedCostUSD + embeddingCost,
       };
 
       const aiAnalysis: AIAnalysis = {
@@ -139,7 +145,7 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
       };
 
       // Cache the analysis
-      store.storeAnalysis(input.repoUrl, commitHash, JSON.stringify(aiAnalysis));
+      store.storeAnalysis(input.repoUrl, cacheKey, JSON.stringify(aiAnalysis));
       this.log(context, 'AI analysis cached successfully');
 
       return { blueprint: input.blueprint, aiAnalysis };
@@ -147,7 +153,7 @@ export class AIAnalyzerAgent extends BaseAgent<AIAnalyzerInput, EnhancedBlueprin
       const errMsg = error instanceof Error ? error.message : String(error);
       this.log(context, `AI analysis failed: ${errMsg}`);
       logger.warn(`AI analysis failed: ${errMsg}. Returning basic blueprint.`);
-      return { blueprint: input.blueprint, aiAnalysis: null };
+      return { blueprint: input.blueprint, aiAnalysis: null, aiError: errMsg };
     } finally {
       store.close();
     }

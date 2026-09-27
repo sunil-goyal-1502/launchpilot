@@ -5,7 +5,7 @@ import { buildEmbeddingPrompt } from './prompts/embedding-prompt';
 
 /**
  * Two-step embedding without a dedicated embedding API:
- * 1. Claude Haiku generates 1-2 sentence summary per chunk
+ * 1. The configured summary model generates 1-2 sentences per chunk
  * 2. Random projection converts summary text to a 256-dim float vector
  *
  * Same text always produces the same vector. Semantically similar summaries
@@ -49,13 +49,14 @@ export class EmbeddingService {
   private client: LLMProvider;
   private totalInputTokens = 0;
   private totalOutputTokens = 0;
+  private estimatedCostUSD: number | null = 0;
 
   constructor(client: LLMProvider) {
     this.client = client;
   }
 
   /**
-   * Embed a single chunk: summarize with Haiku, then project to vector.
+   * Embed a single chunk: summarize with the provider, then project to vector.
    */
   async embedChunk(chunk: CodeChunk): Promise<ChunkEmbedding> {
     const prompt = buildEmbeddingPrompt(chunk.language, chunk.filePath, chunk.content);
@@ -63,6 +64,8 @@ export class EmbeddingService {
 
     this.totalInputTokens += usage.inputTokens;
     this.totalOutputTokens += usage.outputTokens;
+    this.estimatedCostUSD = this.estimatedCostUSD === null || usage.estimatedCostUSD === null
+      ? null : this.estimatedCostUSD + usage.estimatedCostUSD;
 
     const embedding = textToVector(summary);
 
@@ -101,4 +104,6 @@ export class EmbeddingService {
   getTokenUsage(): { inputTokens: number; outputTokens: number } {
     return { inputTokens: this.totalInputTokens, outputTokens: this.totalOutputTokens };
   }
+
+  getEstimatedCostUSD(): number | null { return this.estimatedCostUSD; }
 }

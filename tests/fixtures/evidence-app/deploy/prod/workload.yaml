@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: production
+spec:
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      serviceAccountName: api
+      containers:
+        - name: api
+          image: registry.example.invalid/evidence-app:review-required
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: database, key: url }
+          volumeMounts:
+            - name: vault
+              mountPath: /mnt/secrets
+              readOnly: true
+      volumes:
+        - name: vault
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: database-vault
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: database-vault
+  namespace: production
+spec:
+  provider: azure
+  parameters:
+    keyvaultName: evidence-production-vault
+    clientID: 00000000-0000-0000-0000-000000000001
+  secretObjects:
+    - secretName: database
+      type: Opaque
+      data:
+        - objectName: database-url
+          key: url
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: production
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: production
+spec:
+  selector: { app: api }
+  ports: [{ port: 80, targetPort: 8080 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: production
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port: { number: 80 }

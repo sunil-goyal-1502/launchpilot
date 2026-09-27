@@ -1,0 +1,1 @@
+{"name":"evidence-app","version":"1.0.0","scripts":{"start":"node app/server.js"},"dependencies":{"pg":"^8.13.0","redis":"^4.7.0","@azure/keyvault-secrets":"^4.9.0"}}

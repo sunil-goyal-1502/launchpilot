@@ -6,12 +6,21 @@ import type {
   CloudProvider,
   StrategyTier,
   BaaSMigrationChoice,
+  AIAnalysis,
+  ArchitectureDesign, ArchitectureReviewJob, ArchitectureCloud, DeploymentTopology, GroundedArchitecturePlan, DesignIssue,
 } from '@launchpilot/core';
 
 // --- Request types ---
 
 export interface AnalyzeRequest {
   repoUrl: string;
+  ai?: boolean;
+  environment?: string;
+  cloudProvider?: ArchitectureCloud;
+}
+export interface ArchitectureReviewResponse {
+  design: ArchitectureDesign; job: ArchitectureReviewJob; plan: GroundedArchitecturePlan | null;
+  topology: DeploymentTopology; issues: DesignIssue[];
 }
 
 export interface EstimateRequest {
@@ -32,6 +41,10 @@ export interface DeployRequest {
 
 export interface AnalyzeResponse {
   blueprint: ApplicationBlueprint;
+  aiAnalysis: AIAnalysis | null;
+  aiError?: string;
+  architectureReview?: ArchitectureReviewResponse;
+  architectureScope?: { unitIds: string[]; reason: string; requiresChoice: boolean };
 }
 
 export interface EstimateResponse {

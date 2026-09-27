@@ -1,0 +1,25 @@
+services:
+  api:
+    build: ./app
+    image: ${APP_IMAGE}
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://app:${DB_PASSWORD}@db:5432/app
+      REDIS_URL: redis://cache:6379
+      KEY_VAULT_URL: ${KEY_VAULT_URL}
+    depends_on:
+      - db
+      - cache
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_DB: app
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  cache:
+    image: redis:7
+volumes:
+  pgdata:

@@ -46,7 +46,11 @@ export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   model: string;
-  estimatedCostUSD: number;
+  estimatedCostUSD: number | null; // null when the selected route's pricing is unknown
+}
+
+export function formatAICost(cost: number | null): string {
+  return cost === null ? 'cost not estimated' : `~$${cost.toFixed(4)}`;
 }
 
 // ── AI Analysis result (deep code understanding) ──
@@ -69,6 +73,7 @@ export interface AIAnalysis {
 export interface EnhancedBlueprint {
   blueprint: ApplicationBlueprint;
   aiAnalysis: AIAnalysis | null;
+  aiError?: string;
 }
 
 // ── Code chunk (semantic unit of source code) ──
@@ -102,6 +107,7 @@ export interface IndexedRepo {
   indexedAt: Date;
   totalChunks: number;
   totalFiles: number;
+  analysisFingerprint?: string;
 }
 
 // ── Semantic search types ──

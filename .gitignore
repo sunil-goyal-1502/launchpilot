@@ -1,8 +1,11 @@
 node_modules/
 dist/
 *.tsbuildinfo
-data/launchpilot.db
+**/data/launchpilot.db
+**/data/architectures/
 .env
+.env.*
+!.env.example
 
 # Web app SQLite DB (runtime data)
 launchpilot-web.db
@@ -17,3 +20,6 @@ packages/web/.next/
 
 # Terraform output
 launchpilot-infra/
+
+# Raw public catalog downloads; the curated meter catalog is versioned.
+/.cache/architecture-prices/

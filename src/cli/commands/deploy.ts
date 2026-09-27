@@ -7,7 +7,7 @@ import { InfraPlannerAgent } from '../../agents/infra-planner/infra-planner-agen
 import { SecurityAgent } from '../../agents/security/security-agent.js';
 import { DeployAgent } from '../../agents/deploy/deploy-agent.js';
 import { AIAnalyzerAgent } from '../../agents/ai-analyzer/ai-analyzer-agent.js';
-import { ProviderConfig, ProviderType } from '../../agents/ai-analyzer/llm-provider.js';
+import { resolveProviderConfig } from '../../agents/ai-analyzer/provider-config.js';
 import { showBanner, showBlueprint, showAIAnalysis, showStrategyComparison, showSecuritySummary, showDeploymentResult, showBaaSMigrationInfo, showSubscriptionSteps } from '../display.js';
 import { cleanupDir } from '../../utils/fs-helpers.js';
 import { showArchitectureDiagram } from '../diagram.js';
@@ -29,13 +29,14 @@ export function createDeployCommand(): Command {
     .option('-s, --strategy <tier>', 'Scaling strategy (low, medium, high)')
     .option('-y, --yes', 'Skip confirmation prompts')
     .option('--non-interactive', 'Run in non-interactive mode (requires --cloud and --strategy)')
-    .option('--ai', 'Enable AI-powered deep analysis (requires ANTHROPIC_API_KEY or Ollama)')
-    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
-    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
+    .option('--ai', 'Enable AI-powered deep analysis with the configured provider')
+    .option('--provider <provider>', 'AI provider: catalyst, anthropic or ollama (auto-detected from environment)')
+    .option('--model <model>', 'Analysis and search model route')
+    .option('--summary-model <model>', 'Chat model for code chunk summaries (Catalyst defaults to --model)')
     .option('--backend <strategy>', 'BaaS backend: self-hosted, keep-vendor, or migrate-vendor')
     .option('--live', 'Execute real AWS deployment via Terraform (costs will be incurred)')
     .option('--destroy', 'Destroy previously deployed infrastructure in launchpilot-infra/')
-    .action(async (url: string, options: { cloud?: string; strategy?: string; yes?: boolean; nonInteractive?: boolean; ai?: boolean; provider?: string; model?: string; backend?: string; live?: boolean; destroy?: boolean }) => {
+    .action(async (url: string, options: { cloud?: string; strategy?: string; yes?: boolean; nonInteractive?: boolean; ai?: boolean; provider?: string; model?: string; summaryModel?: string; backend?: string; live?: boolean; destroy?: boolean }) => {
       showBanner();
 
       // ── Destroy shortcut: skip analysis, just tear down ──
@@ -98,6 +99,7 @@ export function createDeployCommand(): Command {
       spinner.start();
 
       const useAI = options.ai ?? false;
+      const providerConfig = useAI ? resolveProviderConfig(options) : undefined;
       const ingestionAgent = new IngestionAgent();
       const blueprint = await ingestionAgent.execute({ repoUrl: url, deferCleanup: useAI }, context);
 
@@ -105,19 +107,10 @@ export function createDeployCommand(): Command {
       showBlueprint(blueprint);
 
       // Optional AI analysis
-      if (useAI) {
-        const providerType = (options.provider ??
-          (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
-
-        const providerConfig: ProviderConfig = {
-          provider: providerType,
-          apiKey: process.env['ANTHROPIC_API_KEY'],
-          ollamaHost: process.env['OLLAMA_HOST'],
-          analysisModel: options.model,
-        };
+      if (useAI && providerConfig) {
 
         if (!AIAnalyzerAgent.isAvailable(providerConfig)) {
-          logger.warn('No AI provider available. Set ANTHROPIC_API_KEY or ensure Ollama is running.');
+          logger.warn('AI provider is not configured. Check CATALYST_AI_GATEWAY_URL and CATALYST_AI_MODEL, ANTHROPIC_API_KEY, or Ollama settings.');
         } else {
           const aiSpinner = createSpinner('Running AI deep analysis...');
           aiSpinner.start();
@@ -129,7 +122,7 @@ export function createDeployCommand(): Command {
               aiSpinner.succeed('AI analysis complete');
               showAIAnalysis(enhanced.aiAnalysis);
             } else {
-              aiSpinner.warn('AI analysis returned no results');
+              aiSpinner.warn(enhanced.aiError ?? 'AI analysis returned no results');
             }
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);

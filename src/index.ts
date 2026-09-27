@@ -12,3 +12,8 @@ export { AIAnalyzerAgent } from './agents/ai-analyzer/ai-analyzer-agent.js';
 export { SemanticSearch } from './agents/ai-analyzer/semantic-search.js';
 export { createCloudProvider } from './cloud/cloud-provider.js';
 export type { ICloudProvider } from './cloud/cloud-provider.js';
+
+export { createLLMProvider } from './agents/ai-analyzer/llm-provider.js';
+export type { LLMProvider, ProviderConfig, ProviderType } from './agents/ai-analyzer/llm-provider.js';
+export { resolveProviderConfig } from './agents/ai-analyzer/provider-config.js';
+export { CatalystClient } from './agents/ai-analyzer/catalyst-client.js';

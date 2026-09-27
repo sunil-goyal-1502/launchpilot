@@ -6,6 +6,7 @@ import { createAnalyzeCommand } from '../src/commands/analyze.js';
 import { createEstimateCommand } from '../src/commands/estimate.js';
 import { createSearchCommand } from '../src/commands/search.js';
 import { createIndexCommand } from '../src/commands/index-cmd.js';
+import { createArchitectureCommand } from '../src/commands/architecture.js';
 
 const program = new Command();
 
@@ -19,5 +20,6 @@ program.addCommand(createAnalyzeCommand());
 program.addCommand(createEstimateCommand());
 program.addCommand(createSearchCommand());
 program.addCommand(createIndexCommand());
+program.addCommand(createArchitectureCommand());
 
 program.parse();

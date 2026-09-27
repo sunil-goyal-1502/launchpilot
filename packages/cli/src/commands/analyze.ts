@@ -3,7 +3,7 @@ import {
   validateRepoUrl, PipelineContext, IngestionAgent, AIAnalyzerAgent,
   cleanupDir, logger,
 } from '@launchpilot/core';
-import type { ProviderConfig, ProviderType } from '@launchpilot/core';
+import { resolveProviderConfig } from '@launchpilot/core';
 import { showBanner, showBlueprint, showAIAnalysis } from '../display.js';
 import { createSpinner } from '../progress.js';
 
@@ -11,10 +11,11 @@ export function createAnalyzeCommand(): Command {
   return new Command('analyze')
     .description('Analyze a repository and show its technology blueprint')
     .argument('<url>', 'GitHub repository URL or local://path')
-    .option('--ai', 'Enable AI-powered deep analysis (requires ANTHROPIC_API_KEY or Ollama)')
-    .option('--provider <provider>', 'AI provider: anthropic or ollama (default: anthropic)')
-    .option('--model <model>', 'Model name override (e.g. qwen2.5-coder:14b for ollama)')
-    .action(async (url: string, options: { ai?: boolean; provider?: string; model?: string }) => {
+    .option('--ai', 'Enable AI-powered deep analysis with the configured provider')
+    .option('--provider <provider>', 'AI provider: catalyst, anthropic or ollama (auto-detected from environment)')
+    .option('--model <model>', 'Analysis and search model route')
+    .option('--summary-model <model>', 'Chat model for code chunk summaries (Catalyst defaults to --model)')
+    .action(async (url: string, options: { ai?: boolean; provider?: string; model?: string; summaryModel?: string }) => {
       showBanner();
 
       const validation = validateRepoUrl(url);
@@ -25,6 +26,7 @@ export function createAnalyzeCommand(): Command {
 
       const context = new PipelineContext();
       const useAI = options.ai ?? false;
+      const providerConfig = useAI ? resolveProviderConfig(options) : undefined;
       const spinner = createSpinner('Analyzing repository...');
       spinner.start();
 
@@ -38,19 +40,10 @@ export function createAnalyzeCommand(): Command {
       showBlueprint(blueprint);
 
       // AI analysis (opt-in)
-      if (useAI) {
-        const providerType = (options.provider ??
-          (process.env['OLLAMA_HOST'] && !process.env['ANTHROPIC_API_KEY'] ? 'ollama' : 'anthropic')) as ProviderType;
-
-        const providerConfig: ProviderConfig = {
-          provider: providerType,
-          apiKey: process.env['ANTHROPIC_API_KEY'],
-          ollamaHost: process.env['OLLAMA_HOST'],
-          analysisModel: options.model,
-        };
+      if (useAI && providerConfig) {
 
         if (!AIAnalyzerAgent.isAvailable(providerConfig)) {
-          logger.warn('No AI provider available. Set ANTHROPIC_API_KEY or ensure Ollama is running.');
+          logger.warn('AI provider is not configured. Check CATALYST_AI_GATEWAY_URL and CATALYST_AI_MODEL, ANTHROPIC_API_KEY, or Ollama settings.');
         } else {
           const aiSpinner = createSpinner('Running AI deep analysis...');
           aiSpinner.start();
@@ -67,7 +60,7 @@ export function createAnalyzeCommand(): Command {
               aiSpinner.succeed('AI analysis complete');
               showAIAnalysis(enhanced.aiAnalysis);
             } else {
-              aiSpinner.warn('AI analysis returned no results');
+              aiSpinner.warn(enhanced.aiError ?? 'AI analysis returned no results');
             }
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
