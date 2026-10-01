@@ -6,7 +6,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { buildArchitectureBundle, generateArchitectureArtifact, prepareValidationBundle, validateGeneratedBundle, validationTargetSchema, requiredValidationCheckIds, type RepositoryArchitecture, type GroundedArchitecturePlan, type ValidationReport } from '@launchpilot/core';
 import { prepareArchitectureValidation, runArchitectureValidation, validationTargetFingerprint } from '../../packages/web/src/lib/architecture-validation';
 import { prepareArchitectureReview, editArchitectureReview } from '../../packages/web/src/lib/architecture-review';
-import { saveArchitecture, saveArchitecturePlan, loadValidationJob, loadValidationBundle, saveValidationJob } from '../../packages/web/src/lib/architecture-store';
+import { saveArchitecture, saveArchitecturePlan, loadValidationJob, loadValidationBundle, saveValidationJob, loadArchitectureDesign, saveArchitectureDesign, loadArchitectureJob, saveArchitectureJob } from '../../packages/web/src/lib/architecture-store';
 import { GET, POST } from '../../packages/web/src/app/api/architecture/export/route';
 
 vi.mock('@launchpilot/core', async original => ({ ...await original<typeof import('@launchpilot/core')>(), generateArchitectureArtifact: vi.fn(), createLLMProvider: vi.fn(), resolveProviderConfig: vi.fn(() => ({ provider: 'catalyst' })), buildArchitectureBundle: vi.fn(), prepareValidationBundle: vi.fn(), validateGeneratedBundle: vi.fn() }));
@@ -36,8 +36,20 @@ describe('generation validation jobs and export gates', () => {
     const response = await POST(new Request('http://localhost/api/architecture/export', { method: 'POST', body: JSON.stringify({ designId, revision: 1 }) }));
     expect(response.status).toBe(202);
     const { job } = await response.json(); expect(job.status).toBe('queued');
+    expect(job.targetId).toBeUndefined(); expect(job.deployTest).toBe(false);
     expect(generateArchitectureArtifact).not.toHaveBeenCalled();
     expect((await (await get(`designId=${designId}`)).json()).job.id).toBe(job.id);
+  });
+  it('reports the saved review failure instead of implying that a cloud target is required',async()=>{
+    await saveArchitectureDesign({...await loadArchitectureDesign(designId),basePlanId:undefined});
+    await saveArchitectureJob({...await loadArchitectureJob(designId),status:'failed',error:'Related deployment review failed coverage validation'});
+    const response=await POST(new Request('http://localhost/api/architecture/export',{method:'POST',body:JSON.stringify({designId,revision:1})}));
+    expect(response.status).toBe(422);
+    const {error}=await response.json();
+    expect(error).toContain('Architecture review needs attention');
+    expect(error).toContain('Related deployment review failed coverage validation');
+    expect(error).toContain('selecting a validation target will not resolve');
+    expect(generateArchitectureArtifact).not.toHaveBeenCalled();
   });
   it('stores per-revision validation, deduplicates worker calls and blocks a validated download on incomplete checks', async () => {
     const job = await prepareArchitectureValidation({ designId, revision: 1 });

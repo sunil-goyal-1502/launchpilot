@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { createLLMProvider, generateArchitectureArtifact, resolveProviderConfig, buildArchitectureBundle, buildCortexDeploymentBundle, prepareValidationBundle, validateGeneratedBundle, validationTargetSchema } from '@launchpilot/core';
 import type { ArchitectureValidationJob, ValidationTarget } from '@launchpilot/core';
 import { readArchitectureReview } from './architecture-review';
+import { scriptGenerationBlocker } from './script-generation';
 import { loadArchitecture, loadArchitecturePlan, cachedArchitectureArtifact, cacheArchitectureArtifact, loadArchitectureDesign, loadValidationJob, saveValidationJob, saveValidationBundle, loadValidationBundle, saveLatestValidation, loadLatestValidation, serializeArchitectureWrite } from './architecture-store';
 
 const now = () => new Date().toISOString();
@@ -22,9 +23,8 @@ export async function validationTargets(): Promise<ValidationTarget[]> {
 export async function prepareArchitectureValidation(input: { designId?: string; revision?: number; planId?: string; targetId?: string; targetFingerprint?: string; deployTest?: boolean }) {
   const review = input.designId ? await readArchitectureReview(input.designId) : undefined;
   if (review && review.design.revision !== input.revision) throw new Error('REVISION_CONFLICT: Review the current architecture revision before generating scripts.');
-  if (review && !review.plan) throw new Error('The saved evidence review must finish before infrastructure generation.');
-  const blockers = review?.issues.filter(i => i.severity === 'blocker') ?? [];
-  if (blockers.length) throw new Error(blockers.map(i => i.message).join('\n'));
+  const blocker = review ? scriptGenerationBlocker({hasPlan:!!review.plan,reviewJob:review.job,issues:review.issues,environment:review.design.environment}) : null;
+  if (blocker) throw new Error([blocker.title,blocker.message,...blocker.details].join('\n'));
   const plan = review?.plan ?? await loadArchitecturePlan(input.planId ?? '');
   if (plan.provider !== 'azure') throw new Error('Validated infrastructure export currently supports Azure only. This proposal needs a native cloud Terraform implementation; Bicep cannot deploy AWS or GCP.');
   const target = input.targetId ? (await validationTargets()).find(t => t.id === input.targetId) : undefined;

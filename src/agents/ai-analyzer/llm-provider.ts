@@ -19,6 +19,9 @@ export interface LLMProvider {
   /** Run analysis expecting JSON output. */
   analyzeStructured<T>(systemPrompt: string, userMessage: string, model?: string, options?: { maxOutputTokens?: number }): Promise<{ result: T; usage: TokenUsage }>;
 
+  /** Checkpoint adapters discard responses rejected by the caller's evidence validation. */
+  invalidateStructuredResponse?(systemPrompt: string, userMessage: string, model?: string, options?: { maxOutputTokens?: number }): Promise<void>;
+
   /** Generate a short summary for embedding. */
   generateChunkSummary(prompt: string): Promise<{ summary: string; usage: TokenUsage }>;
 

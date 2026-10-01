@@ -33,6 +33,12 @@ export const loadValidationBundle = async (id: string) => (await get<{ files: Re
 export const saveLatestValidation = (id: string, jobId: string) => put('latest-validation', { id, jobId } as { id: string });
 export const loadLatestValidation = async (id: string) => loadValidationJob((await get<{ jobId: string }>('latest-validation', id)).jobId);
 export const saveArchitectureCheckpoint = (id: string, response: unknown) => put('review-checkpoint', { id, response } as { id: string });
+export const invalidateArchitectureCheckpoint = async (id: string) => {
+  // Keep a private diagnostic copy, but never replay a rejected response as a checkpoint.
+  const response = await loadArchitectureCheckpoint(id);
+  if (response) await put('rejected-review', { id, response } as { id: string });
+  await saveArchitectureCheckpoint(id, null);
+};
 export const loadArchitectureCheckpoint = async (id: string): Promise<unknown | null> => { try { return (await get<{ response: unknown }>('review-checkpoint', id)).response; } catch { return null; } };
 export function architecturePlanCacheKey(architectureId: string, unitIds: string[], model: string | undefined, provider: string, gateway?: string, cloudProvider = 'azure', environment?: string) {
   return createHash('sha256').update(JSON.stringify({ version: 'grounded-architect-review-v3', architectureId, units: [...unitIds].sort(), model, provider, gateway, cloudProvider, environment })).digest('hex');

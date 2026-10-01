@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { RepositoryArchitecture } from '../../../packages/core/src/types/architecture';
-import { validateArchitecturePlan, recommendArchitecture, configurationReviewBatches, reviewConfigurationBatches, architecturePlanSchema, repairPlanEnums, attachResourceEvidence, type GroundedArchitecturePlan } from '../../../packages/core/src/architecture/planner';
+import { validateArchitecturePlan, recommendArchitecture, configurationReviewBatches, reviewConfigurationBatches, architecturePlanSchema, repairPlanEnums, repairFindingReferences, repairOperationalCoverage, attachResourceEvidence, type GroundedArchitecturePlan } from '../../../packages/core/src/architecture/planner';
 import { validateArchitectureArtifact, buildArchitectureBundle, zipArchitectureBundle, type ArchitectureArtifact } from '../../../packages/core/src/architecture/iac';
 import { encodePlanningContext, decodePlanningContext, translatePlanningIds } from '../../../packages/core/src/architecture/planning-context';
 import { unzipSync, strFromU8 } from 'fflate';
@@ -119,6 +119,51 @@ describe('grounded plan and infrastructure completeness', () => {
     const edge = plan(); edge.connections[0].basis = 'repository';
     expect(() => validateArchitecturePlan(edge, graph())).toThrow('no matching observed');
   });
+  it('repairs finding links while preserving topology, valid references and existing recommendations', async () => {
+    const source = graph(), candidate = plan();
+    source.gaps.push({ ...source.gaps[0], id: 'db-secret-delivery', message: 'Supply the database URL securely' });
+    candidate.decisions[0].resolves.push('deployment-validation'); // Architecture topic, not a graph finding.
+    const client = { analyzeStructured: vi.fn()
+      .mockResolvedValueOnce({ result: { corrections: [{ decisionId: 'configure-db', findingIds: [] }] } })
+      .mockResolvedValueOnce({ result: { assignments: [{ decisionId: 'configure-db', findingIds: ['db-secret-delivery'] }], decisions: [] } }) };
+    const fixed = await repairFindingReferences(candidate, source, client as never);
+    expect(fixed.components).toEqual(candidate.components);
+    expect(fixed.connections).toEqual(candidate.connections);
+    expect(fixed.decisions).toEqual([{ ...candidate.decisions[0], resolves: ['config-gap', 'db-secret-delivery'] }]);
+    expect(candidate.decisions[0].resolves).toContain('deployment-validation');
+    expect(() => validateArchitecturePlan(fixed, source)).not.toThrow();
+    const complete = { analyzeStructured: vi.fn() };
+    expect(await repairFindingReferences(fixed, source, complete as never)).toEqual(fixed);
+    expect(complete.analyzeStructured).not.toHaveBeenCalled();
+  });
+  it('rejects fabricated finding repairs and incomplete coverage without changing the candidate', async () => {
+    const candidate = plan(); candidate.decisions[0].resolves.push('invented');
+    const invalid = { analyzeStructured: vi.fn().mockResolvedValue({ result: { corrections: [{ decisionId: 'configure-db', findingIds: ['also-invented'] }] } }), invalidateStructuredResponse: vi.fn() };
+    await expect(repairFindingReferences(candidate, graph(), invalid as never)).rejects.toThrow('known finding IDs');
+    expect(invalid.invalidateStructuredResponse).toHaveBeenCalledTimes(2);
+    expect(candidate.decisions[0].resolves).toEqual(['config-gap', 'invented']);
+    const missing = plan(); missing.decisions = [];
+    const incomplete = { analyzeStructured: vi.fn().mockResolvedValue({ result: { assignments: [], decisions: [] } }) };
+    await expect(repairFindingReferences(missing, graph(), incomplete as never)).rejects.toThrow('every supplied finding exactly once');
+    expect(missing.decisions).toEqual([]);
+  });
+  it('repairs operational topic coverage independently and rejects invented references', async () => {
+    const candidate = plan(); candidate.operations[0].topicIds = ['scaling-control'];
+    const operations = structuredClone(candidate.operations); operations[0].topicIds = ['capacity'];
+    const topics = [{ id: 'deployment-validation' }, { id: 'capacity' }];
+    const client = { analyzeStructured: vi.fn().mockResolvedValue({ result: { operations } }) };
+    const fixed = await repairOperationalCoverage(candidate, topics, graph(), client as never);
+    expect(fixed.components).toEqual(candidate.components);
+    expect(fixed.decisions).toEqual(candidate.decisions);
+    expect(fixed.operations[0].topicIds).toEqual(['capacity']);
+    expect(candidate.operations[0].topicIds).toEqual(['scaling-control']);
+    const request = JSON.parse(client.analyzeStructured.mock.calls[0][1]);
+    expect(request.error).toContain('missing topics: capacity');
+    expect(request.error).toContain('unknown architecture topic: scaling-control');
+    const bad = { analyzeStructured: vi.fn().mockResolvedValue({ result: { operations: operations.map(o => ({ ...o, evidenceIds: ['invented'] })) } }), invalidateStructuredResponse: vi.fn() };
+    await expect(repairOperationalCoverage(candidate, topics, graph(), bad as never)).rejects.toThrow('unknown evidence');
+    expect(bad.invalidateStructuredResponse).toHaveBeenCalledTimes(2);
+  });
   it('resolves citations to known graph records but still rejects invented evidence', () => {
     const source = graph();
     source.connections.push({ id: 'edge-known', from: 'app', to: 'app', relationship: 'observed connection', evidence: ['ev-app'] });
@@ -130,6 +175,23 @@ describe('grounded plan and infrastructure completeness', () => {
     expect(() => validateArchitecturePlan(resolved, source)).not.toThrow();
     candidate.operations[0].evidenceIds = ['edge-invented'];
     expect(() => validateArchitecturePlan(attachResourceEvidence(candidate, source), source)).toThrow('outside');
+  });
+  it('derives connection provenance from the directed evidence graph and labels inferred connections as proposals',()=>{
+    const source=graph(),candidate=plan();candidate.connections[0].basis='repository';
+    const proposed=attachResourceEvidence(candidate,source);
+    expect(proposed.connections[0].basis).toBe('recommendation');
+    expect(proposed.connections[0].purpose).toContain('not observed in repository');
+    expect(candidate.connections[0].basis).toBe('repository');
+    candidate.components[1].resourceIds=['db'];
+    source.connections.push({id:'db-edge',from:'app',to:'db',relationship:'PostgreSQL connection',evidence:['db-edge-evidence']});
+    candidate.connections[0].evidenceIds=[];
+    const observed=attachResourceEvidence(candidate,source);
+    expect(observed.connections[0]).toMatchObject({basis:'repository',evidenceIds:['db-edge-evidence']});
+    candidate.connections[0]={...candidate.connections[0],from:'database',to:'api'};
+    expect(attachResourceEvidence(candidate,source).connections[0].basis).toBe('recommendation');
+    candidate.connections[0].evidenceIds=['invented-evidence'];
+    expect(attachResourceEvidence(candidate,source).connections[0].evidenceIds).toContain('invented-evidence');
+    expect(()=>validateArchitecturePlan(attachResourceEvidence(candidate,graph()),graph())).toThrow();
   });
   it('requires an actual resource property for configuration and exact component coverage', () => {
     expect(() => validateArchitectureArtifact(artifact(), plan())).not.toThrow();

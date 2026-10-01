@@ -72,6 +72,28 @@ describe('environment-first evidence review', () => {
     const broken={analyzeStructured:vi.fn().mockResolvedValue({result:{reviews:[]},usage:{model:'test'}})} as unknown as LLMProvider;
     await expect(reviewRelatedDeploymentFiles(g,broken,'gcp')).rejects.toThrow('coverage validation');
   });
+  it('preserves distinct YAML documents from the same file with unique review IDs', async () => {
+    const g=graph();
+    g.relatedDeploymentContext=[
+      {file:'helm/large.yaml',content:'x'.repeat(80000),redacted:true},
+      {file:'ops/api.yaml',content:JSON.stringify({kind:'Service',metadata:{name:'api'}}),redacted:true},
+      {file:'ops/api.yaml',content:JSON.stringify({kind:'Deployment',metadata:{name:'api'}}),redacted:true},
+      {file:'ops/data.yaml',content:JSON.stringify({kind:'Secret',metadata:{name:'data'}}),redacted:true},
+      {file:'ops/data.yaml',content:JSON.stringify({kind:'Service',metadata:{name:'data'}}),redacted:true},
+      {file:'ops/data.yaml',content:JSON.stringify({kind:'StatefulSet',metadata:{name:'data'}}),redacted:true},
+    ];
+    const seen:Array<{id:string;file:string;content:string}>=[];
+    const client={analyzeStructured:vi.fn(async (_system:string,input:string)=>{
+      const {files}=JSON.parse(input); seen.push(...files);
+      return {result:{reviews:files.map((f:{id:string})=>({id:f.id,findings:'Retain this document and its existing deployment owner.'}))},usage:{model:'test'}};
+    })} as unknown as LLMProvider;
+    const result=await reviewRelatedDeploymentFiles(g,client,'azure');
+    expect(result.reviews).toHaveLength(7);
+    expect(new Set(seen.map(p=>p.id)).size).toBe(7);
+    expect(result.reviews.filter(p=>p.file==='ops/api.yaml')).toHaveLength(2);
+    expect(result.reviews.filter(p=>p.file==='ops/data.yaml')).toHaveLength(3);
+    expect(seen.map(p=>p.content).join('')).toBe(g.relatedDeploymentContext.map(f=>f.content).join(''));
+  });
 });
 
 describe('architecture-based capacity and pricing', () => {

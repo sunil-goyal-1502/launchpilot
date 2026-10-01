@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createLLMProvider, recommendArchitecture, resolveProviderConfig, selectArchitectureScope, validateArchitecturePlan, inspectArchitectureDesign, materializeArchitectureDesign, designEditSchema, selectedEnvironment, deploymentEnvironments, environmentName } from '@launchpilot/core';
 import type { ArchitectureDesign, ArchitectureReviewJob, ArchitectureCloud, DesignEdit, GroundedArchitecturePlan, RepositoryArchitecture } from '@launchpilot/core';
-import { architecturePlanCacheKey, cacheArchitecturePlan, cachedArchitecturePlan, loadArchitecture, loadArchitectureCheckpoint, loadArchitectureDesign, loadArchitectureJob, loadArchitecturePlan, saveArchitectureCheckpoint, saveArchitectureDesign, saveArchitectureJob, serializeArchitectureWrite } from './architecture-store';
+import { architecturePlanCacheKey, cacheArchitecturePlan, cachedArchitecturePlan, loadArchitecture, loadArchitectureCheckpoint, invalidateArchitectureCheckpoint, loadArchitectureDesign, loadArchitectureJob, loadArchitecturePlan, saveArchitectureCheckpoint, saveArchitectureDesign, saveArchitectureJob, serializeArchitectureWrite } from './architecture-store';
 
 export const architectureDesignId = (architectureId: string, unitIds: string[], cloudProvider: ArchitectureCloud = 'azure', environment?: string) => createHash('sha256').update(JSON.stringify({ version: 1, architectureId, unitIds: [...unitIds].sort(), ...(cloudProvider !== 'azure' ? { cloudProvider } : {}), ...(environment ? { environment } : {}) })).digest('hex');
 const now = () => new Date().toISOString();
@@ -102,8 +102,10 @@ export async function runArchitectureReview(id: string): Promise<void> {
       const config = resolveProviderConfig();
       const client = createLLMProvider({ ...config, requestTimeoutMs: Math.max(config.requestTimeoutMs ?? 0, 240000) });
       const original = client.analyzeStructured.bind(client);
+      const checkpointId = (args: Parameters<typeof original>) => createHash('sha256').update(JSON.stringify({ version: 1, provider: config.provider, gateway: config.gatewayUrl, model: config.analysisModel, args })).digest('hex');
+      client.invalidateStructuredResponse = (...args) => invalidateArchitectureCheckpoint(checkpointId(args));
       client.analyzeStructured = async (...args) => {
-        const checkpoint = createHash('sha256').update(JSON.stringify({ version: 1, provider: config.provider, gateway: config.gatewayUrl, model: config.analysisModel, args })).digest('hex');
+        const checkpoint = checkpointId(args);
         const cached = await loadArchitectureCheckpoint(checkpoint);
         if (cached) { job.reusedCalls++; job.step = `Reusing saved review checkpoints (${job.reusedCalls})`; await persist(); return cached as never; }
         job.step = args[0].includes('SHARED-DESIGN') ? 'Reviewing the complete component architecture' : args[0].includes('configuration') ? `Reviewing configuration delivery · ${job.completedCalls} completed model requests` : 'Validating architecture recommendations';

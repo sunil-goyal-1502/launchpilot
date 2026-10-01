@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLLMProvider, recommendArchitecture, resolveProviderConfig, type GroundedArchitecturePlan, type RepositoryArchitecture } from '@launchpilot/core';
+import { reviewRelatedDeploymentFiles } from '../../packages/core/src/architecture/planner';
 import { saveArchitecture, saveArchitectureJob, loadArchitectureDesign, saveArchitectureDesign } from '../../packages/web/src/lib/architecture-store';
 import { prepareArchitectureReview, readArchitectureReview, editArchitectureReview, runArchitectureReview, retryArchitectureReview } from '../../packages/web/src/lib/architecture-review';
 
@@ -85,6 +86,29 @@ describe('saved proactive architecture review', () => {
     await expect(editArchitectureReview(design.id, current.revision, { type: 'put-connection', connection: { id: 'broken', from: 'external', to: 'missing', purpose: 'Broken link', binding: { type: 'design' } } })).rejects.toThrow('distinct components');
     expect((await loadArchitectureDesign(design.id)).revision).toBe(1);
     expect((await editArchitectureReview(design.id, 1, 'undo')).topology.nodes).toEqual([]);
+  });
+  it('retries rejected checkpoint responses while retaining successfully reviewed file batches', async () => {
+    const prepared=await prepareArchitectureReview(graph,[]);
+    let invalid=true;
+    const model=vi.fn(async (_system:string,input:string)=>{
+      const {files}=JSON.parse(input.split('\nRegenerate')[0]);
+      return {result:{reviews:files.map((f:{id:string;file:string})=>({id:invalid && f.file==='second.yaml'?'unknown-document':f.id,findings:'Preserve existing deployment implementation.'}))},usage:{model:'test'}};
+    });
+    vi.mocked(createLLMProvider).mockImplementation(()=>({analyzeStructured:model}) as never);
+    vi.mocked(recommendArchitecture).mockImplementation(async (_graph,_units,client)=>{
+      await reviewRelatedDeploymentFiles({...graph,relatedDeploymentContext:[{file:'first.yaml',content:'x'.repeat(50000),redacted:true},{file:'second.yaml',content:'y'.repeat(50000),redacted:true}]},client,'azure');
+      return plan;
+    });
+    await runArchitectureReview(prepared.design.id);
+    expect((await readArchitectureReview(prepared.design.id)).job.status).toBe('failed');
+    invalid=false;
+    await retryArchitectureReview(prepared.design.id);
+    await runArchitectureReview(prepared.design.id);
+    const resumed=await readArchitectureReview(prepared.design.id);
+    expect(resumed.job.error).toBeUndefined();
+    expect(resumed.job.status).toBe('complete');
+    expect(model.mock.calls.filter(([,input])=>input.includes('first.yaml'))).toHaveLength(1);
+    expect(model.mock.calls.filter(([,input])=>input.includes('second.yaml'))).toHaveLength(3);
   });
   it('resumes a stale worker lease while keeping a live worker lease untouched', async () => {
     const prepared = await prepareArchitectureReview(graph, []);

@@ -2,6 +2,14 @@
 
 The web **Generate and validate Terraform + Bicep** action and CLI `architecture --generate` always invoke the same fixed validator. They generate from the saved evidence, plan and design revision. They do not rescan the repository to validate it. Reports, job progress and generated bundles are persisted; a browser disconnect does not discard the result.
 
+Selecting Azure and an environment chooses the architecture being reviewed. The separate **Cloud validation target (optional)** supplies account, resource-group, parameter and cluster settings for live validation. **Local script checks — no cloud target required** generates a review bundle and runs local validators without selecting a cloud account. Missing cloud checks remain explicit in the report.
+
+Generation requires a completed evidence review and a design without implementation blockers. The panel displays the specific prerequisite and offers **Resume architecture review** when that review failed. Multi-document YAML files keep a distinct review identity for every document and chunk; no resource is dropped to satisfy coverage. Responses rejected by evidence validation are invalidated individually so a retry can reuse valid checkpoints without replaying the same rejected response forever.
+
+Connection provenance is derived from the directed repository graph. Known connections receive their recorded citations; model-inferred connections without a matching observed edge are explicitly marked as proposed and unobserved. Unknown resource/component/evidence identifiers still fail validation. This avoids both fabricated repository claims and repeated regeneration of the whole architecture just to correct a provenance label.
+
+Invalid finding links and operational topic coverage are repaired independently of the topology. Missing findings are reviewed in bounded batches and assigned to existing recommendations where they already cover the requirement. Repository findings, architecture topics and implementation controls have distinct identifiers; each reference must match its own source list. All original findings must still have a concrete resolution before a plan is accepted. Rejected responses are kept privately for diagnostics and excluded from reusable checkpoints.
+
 ## Required checks
 
 | Stage | What must pass |
