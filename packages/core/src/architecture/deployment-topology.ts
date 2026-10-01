@@ -2,6 +2,7 @@ import { cloudProfiles, reviewDeploymentControls, type ArchitectureCloud } from 
 import { parseAllDocuments } from 'yaml';
 import type { ArchitectureResource, RepositoryArchitecture } from '../types/architecture';
 import type { GroundedArchitecturePlan } from './planner';
+import { terraformSizingResolver } from './terraform-sizing';
 
 export type TopologyBasis = 'repository' | 'recommendation' | 'external' | 'user';
 export interface DeploymentContainer {
@@ -17,6 +18,8 @@ export interface DeploymentWorkload {
   containers: DeploymentContainer[]; exposed: boolean; servicePort?: number;
   resourceIds: string[]; evidenceIds: string[]; file: string; pointer: string;
   placement?: { topologySpread: boolean; antiAffinity: boolean };
+  countNote?: string;
+  jobParallelism?: number;
 }
 export interface DeploymentNode {
   id: string; name: string; kind: string; technology: string;
@@ -58,11 +61,31 @@ export interface DeploymentTopology {
   limitations: string[];
 }
 
+export const isSteadyWorkload = (w: DeploymentWorkload) => !['Job', 'CronJob'].includes(w.controller);
+export function deploymentTotals(workloads: DeploymentWorkload[]): DeploymentTopology['totals'] {
+  const steady = workloads.filter(isSteadyWorkload);
+  return { workloads: workloads.length, applicationPods: steady.reduce((n, w) => n + (w.replicas ?? 0), 0),
+    unspecifiedWorkloads: steady.filter(w => w.replicas === null).length,
+    applicationContainers: steady.reduce((n, w) => n + (w.replicas ?? 0) * w.containers.filter(c => c.role === 'application').length, 0),
+    initContainers: workloads.reduce((n, w) => n + w.containers.filter(c => c.role === 'init').length, 0) };
+}
+export function deploymentCountSummary(topology: DeploymentTopology) {
+  const steady = topology.workloads.filter(isSteadyWorkload), batch = topology.workloads.filter(w => !isSteadyWorkload(w));
+  return { ...deploymentTotals(topology.workloads), steadyWorkloads: steady.length, batchJobs: batch.length,
+    minPods: steady.reduce((sum, w) => sum + (w.minReplicas ?? w.replicas ?? 0), 0),
+    maxPods: steady.reduce((sum, w) => sum + (w.maxReplicas ?? w.replicas ?? 0), 0),
+    autoscaled: steady.some(w => w.maxReplicas !== undefined),
+  };
+}
+
 type ObjectValue = Record<string, any>;
 /** Parse only the immutable, already-redacted deployment snapshot. No current checkout or cloud defaults. */
 export function deploymentDocuments(graph: RepositoryArchitecture, unitIds: string[]) {
   const files = new Set(graph.deploymentUnits.filter(u => unitIds.includes(u.id)).flatMap(u => u.files));
   return graph.deploymentContext.filter(c => files.has(c.file)).flatMap(c => {
+    // A Go template is not a Kubernetes declaration. YAML can otherwise turn
+    // {{ .Values.* }} into object keys and create misleading pseudo-resources.
+    if (c.content.includes('{{')) { try { JSON.parse(c.content); } catch { return []; } }
     try { return parseAllDocuments(c.content).filter(d => !d.errors.length).flatMap(d => {
       const data = d.toJS({ maxAliasCount: 50 });
       const documents = Array.isArray(data) ? data : data?.kind === 'List' ? data.items : [data];
@@ -93,11 +116,13 @@ export function buildDeploymentTopology(graph: RepositoryArchitecture, unitIds: 
   let expanded = true;
   while (expanded) { expanded = false; for (const edge of graph.connections) if (ids.has(edge.from) && !ids.has(edge.to)) { ids.add(edge.to); expanded = true; } }
   const resources = graph.resources.filter(r => ids.has(r.id));
+  const resolveSizing = terraformSizingResolver(graph);
   const documents = deploymentDocuments(graph, unitIds);
   const workloads: DeploymentWorkload[] = [];
   const nodes: DeploymentNode[] = [];
   const controls: DeploymentControl[] = [];
   const limitations = ['Counts describe the selected deployment declarations, not live cluster state. Platform controllers, capability-created pods, rollout surge and injected sidecars are excluded unless explicitly declared.'];
+  if (graph.deploymentPreparation?.previewOnly) limitations.push('Helm previews use explicit unresolved-input markers for tenant identity, namespace and infrastructure outputs. Replica counts and container settings come from the selected chart/value layers. Supply real operator inputs and render again before deployment.');
   const roots = (file: string) => units.filter(u => u.files.includes(file)).map(u => u.id);
   const refs = (r?: ArchitectureResource) => r?.evidence ?? [];
   for (const doc of documents) {
@@ -122,18 +147,39 @@ export function buildDeploymentTopology(graph: RepositoryArchitecture, unitIds: 
       if (!resource) continue;
       const pod = value.kind === 'Pod' ? value.spec : value.kind === 'CronJob' ? value.spec?.jobTemplate?.spec?.template?.spec : value.spec?.template?.spec;
       const hpa = documents.find(d => d.value.kind === 'HorizontalPodAutoscaler' && d.value.metadata?.namespace === value.metadata?.namespace && d.value.spec?.scaleTargetRef?.name === value.metadata?.name && d.value.spec?.scaleTargetRef?.kind === value.kind)?.value;
-      workloads.push({ id: resource.id, name: resource.name, controller: value.kind, namespace: value.metadata?.namespace ?? '(namespace from apply context)', owner: 'Kubernetes manifests', replicas: value.kind === 'Pod' ? 1 : count(value.spec?.replicas), replicaBasis: 'repository', ...(hpa ? { minReplicas: hpa.spec?.minReplicas, maxReplicas: hpa.spec?.maxReplicas } : {}), containers: [...(pod?.containers ?? []).map((c: ObjectValue) => container({ ...c, securityContext:{ ...pod?.securityContext, ...c.securityContext } }, 'application')), ...(pod?.initContainers ?? []).map((c: ObjectValue) => container({ ...c, securityContext:{ ...pod?.securityContext, ...c.securityContext } }, 'init'))], exposed: false, resourceIds: [resource.id], evidenceIds: refs(resource), file: doc.file, pointer: value.kind === 'Pod' ? '/spec' : value.kind === 'CronJob' ? '/spec/jobTemplate/spec/template/spec' : '/spec/template/spec', placement:placement(pod ?? {}) });
+      const batch = ['Job', 'CronJob'].includes(value.kind), daemon = value.kind === 'DaemonSet';
+      const defaulted = ['Deployment', 'StatefulSet'].includes(value.kind) && value.spec?.replicas === undefined;
+      const replicas = value.kind === 'Pod' ? 1 : batch || daemon ? null : defaulted ? 1 : count(value.spec?.replicas);
+      workloads.push({ id: resource.id, name: resource.name, controller: value.kind, namespace: value.metadata?.namespace ?? '(namespace from apply context)', owner: 'Kubernetes manifests', replicas, replicaBasis: 'repository',
+        countNote: batch ? 'Batch execution; excluded from steady-state pods' : daemon ? 'One pod per eligible node; node count is required' : defaulted ? 'Kubernetes default: replicas omitted' : hpa ? 'Initial replicas; autoscaler controls the running count' : 'Selected manifest replicas',
+        ...(batch ? { jobParallelism: count((value.kind === 'CronJob' ? value.spec?.jobTemplate?.spec : value.spec)?.parallelism) ?? 1 } : {}),
+        ...(hpa ? { minReplicas: count(hpa.spec?.minReplicas) ?? 1, maxReplicas: count(hpa.spec?.maxReplicas) ?? undefined } : {}), containers: [...(pod?.containers ?? []).map((c: ObjectValue) => container({ ...c, securityContext:{ ...pod?.securityContext, ...c.securityContext } }, 'application')), ...(pod?.initContainers ?? []).map((c: ObjectValue) => container({ ...c, securityContext:{ ...pod?.securityContext, ...c.securityContext } }, 'init'))], exposed: false, resourceIds: [resource.id], evidenceIds: refs(resource), file: doc.file, pointer: value.kind === 'Pod' ? '/spec' : value.kind === 'CronJob' ? '/spec/jobTemplate/spec/template/spec' : '/spec/template/spec', placement:placement(pod ?? {}) });
     }
   }
   const cortex = units.some(u => u.format === 'cortex');
-  const owner = cortex ? 'Cortex / Crossplane on the selected environment’s Kubernetes cluster' : units.map(u => u.format).join(' + ') || 'Target hosting must be selected';
-  for (const workload of workloads) nodes.push({ id: workload.id, name: workload.name, kind: 'application', technology: workload.controller, layer: 'runtime', basis: 'repository', owner: workload.owner, details: [`${workload.replicas ?? 'Unspecified'} pods`, `${workload.containers.filter(c => c.role === 'application').length} application container(s) per pod`, workload.namespace], resourceIds: workload.resourceIds, evidenceIds: workload.evidenceIds, workloadIds: [workload.id] });
+  const owner = graph.deploymentTarget?.kind === 'cortex-platform' ? 'Current Cortex · ApplicationDeployment → Terraform + Argo CD / Helm'
+    : cortex ? 'Cortex / Crossplane on the selected environment’s Kubernetes cluster' : units.map(u => u.format).join(' + ') || 'Target hosting must be selected';
+  if (graph.deploymentTarget?.kind === 'cortex-platform') nodes.push({ id: 'existing-cortex-platform', name: 'Cortex cluster & controllers', kind: 'platform', technology: 'Kubernetes · Argo CD · Cortex tenant operator', layer: 'operations', basis: 'external', owner: 'Cortex platform owner', details: ['Existing deployment target', 'Cluster identity, tenant namespace and node-pool capacity require target inputs'], resourceIds: [], evidenceIds: workloads.flatMap(w => w.evidenceIds) });
+  for (const workload of workloads) {
+    if (graph.deploymentTarget?.kind === 'cortex-platform') workload.owner = 'Cortex tenant operator / Argo CD / Helm';
+    nodes.push({ id: workload.id, name: workload.name, kind: 'application', technology: workload.controller, layer: 'runtime', basis: 'repository', owner: workload.owner, details: [`${workload.replicas ?? 'Unspecified'} pods`, `${workload.containers.filter(c => c.role === 'application').length} application container(s) per pod`, workload.namespace], resourceIds: workload.resourceIds, evidenceIds: workload.evidenceIds, workloadIds: [workload.id] });
+  }
   for (const resource of resources) {
     if (workloads.some(w => w.resourceIds.includes(resource.id)) || resource.attributes.diagramRole === 'deployment-metadata' || resource.origin === 'code') continue;
     let config: ObjectValue = {}, overrides: ObjectValue = {};
     try { config = JSON.parse(resource.attributes.config ?? '{}'); overrides = JSON.parse(resource.attributes.instanceOverrides ?? '{}').params ?? {}; } catch { /* Only parsed facts are displayed. */ }
     const params = { ...config.defaultParams, ...overrides };
     const details: string[] = [];
+    if (resource.attributes.sizing) {
+      try { for (const [key, expression] of Object.entries(JSON.parse(resource.attributes.sizing))) {
+        const { value, defaulted } = resolveSizing(resource, expression);
+        const name = ['sku', 'sku_name'].includes(key) ? 'SKU' : key === 'storage_mb' ? 'Storage' : key.replaceAll('_', ' ');
+        const display = key === 'storage_mb' && typeof value === 'number' ? `${value / 1024} GiB` : value;
+        details.push(`${name}: ${display}${defaulted ? ' (default)' : ''}`);
+      } } catch { /* Keep malformed metadata out of displayed facts. */ }
+    }
+    if (resource.attributes.cardinality) details.push(resource.attributes.cardinality);
+    if (resource.attributes.highAvailability) details.push(resource.attributes.highAvailability);
     for (const [key, label] of [['sku', 'SKU'], ['replicaCount', 'Replicas'], ['partitionCount', 'Partitions'], ['instances', 'Instances']] as const) if (params[key] !== undefined) details.push(`${label}: ${params[key]}`);
     if (config.queueNames) details.push(`${config.queueNames.length} declared queues`);
     if (resource.attributes.provider === 'cortex-postgresql') {
@@ -146,11 +192,15 @@ export function buildDeploymentTopology(graph: RepositoryArchitecture, unitIds: 
       const target = workloads.find(w => w.id === edge.to);
       if (target) details.push(`Routes ${target.containers.find(c => c.role === 'application')?.name ?? target.name}${target.servicePort ? ` :${target.servicePort}` : ''}`);
     }
-    const layer = /ingress|\/Service$/i.test(resource.technology) ? 'routing' : ['database', 'cache', 'storage'].includes(resource.kind) ? 'data' : ['secret', 'configuration', 'vault', 'identity'].includes(resource.kind) ? 'operations' : resource.kind === 'application' ? 'runtime' : 'integration';
-    nodes.push({ id: resource.id, name: resource.name, kind: resource.kind, technology: resource.technology, layer, basis: resource.origin === 'external' ? 'external' : 'repository', owner: resource.attributes.deploymentOwner ? 'Cortex / capability provider' : 'Selected deployment definition', details, resourceIds: [resource.id], evidenceIds: resource.evidence, pricing: deploymentPricing(resource.attributes.provider, config, params) });
+    const layer = /cdn_frontdoor|frontDoorWebApplicationFirewallPolicies/i.test(resource.technology) ? 'edge'
+      : /ingress|\/(?:Service|HTTPRoute|Gateway)$/i.test(resource.technology) ? 'routing'
+      : /^(?:azurerm_(?:kubernetes_cluster|container_registry|monitor_|log_analytics|application_insights|dashboard_grafana|private_|role_assignment|policy_|resource_group|subnet|route_table|network_security_group)|random_|time_|null_)/.test(resource.technology) ? 'operations'
+      : ['database', 'cache', 'storage'].includes(resource.kind) ? 'data' : ['secret', 'configuration', 'vault', 'identity'].includes(resource.kind) ? 'operations' : resource.kind === 'application' ? 'runtime' : 'integration';
+    nodes.push({ id: resource.id, name: resource.name, kind: resource.kind, technology: resource.technology, layer, basis: resource.origin === 'external' ? 'external' : 'repository', owner: resource.attributes.platformOwnership ?? resource.attributes.deploymentOwner ?? (resource.attributes.declaration ? 'Terraform / selected state owner' : 'Selected deployment definition'), details, resourceIds: [resource.id], evidenceIds: resource.evidence, pricing: deploymentPricing(resource.attributes.provider, config, params) });
   }
   const nodeIds = new Set(nodes.map(n => n.id));
   const connections: DeploymentTopology['connections'] = graph.connections.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to)).map(e => ({ id: e.id, from: e.from, to: e.to, purpose: e.relationship, basis: 'repository', evidenceIds: e.evidence }));
+  if (graph.deploymentTarget?.kind === 'cortex-platform') for (const w of workloads) connections.push({ id: `platform-host:${w.id}`, from: 'existing-cortex-platform', to: w.id, purpose: 'Hosts selected Helm workload; cluster capacity requires verification', basis: 'external', evidenceIds: w.evidenceIds });
   const ingress = nodes.filter(n => n.layer === 'routing' && /ingress/i.test(n.technology));
   if (cortex && workloads.length) {
     const ev = [...new Set(ingress.flatMap(n => n.evidenceIds))];
@@ -191,5 +241,5 @@ export function buildDeploymentTopology(graph: RepositoryArchitecture, unitIds: 
   if (cortex) limitations.push('Cortex capability providers may create additional database, Redis, SpiceDB and control-plane pods. Their versions and sizing contracts must be verified; the application replica total is not the whole cluster total.');
   if (!workloads.length) limitations.push('No supported pod template is declared in this scope. Container/pod placement and replica counts must be supplied by the selected hosting design; source modules are not automatically separate workloads.');
   return { version: 1, architectureId: graph.id, planId: plan?.id, unitIds, owner, namespaces: [...new Set(workloads.map(w => w.namespace))], workloads, nodes, connections, controls,
-    totals: { workloads: workloads.length, applicationPods: workloads.reduce((n, w) => n + (w.replicas ?? 0), 0), unspecifiedWorkloads: workloads.filter(w => w.replicas === null).length, applicationContainers: workloads.reduce((n, w) => n + (w.replicas ?? 0) * w.containers.filter(c => c.role === 'application').length, 0), initContainers: workloads.reduce((n, w) => n + w.containers.filter(c => c.role === 'init').length, 0) }, limitations };
+    totals: deploymentTotals(workloads), limitations };
 }

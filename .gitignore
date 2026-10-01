@@ -3,6 +3,7 @@ dist/
 *.tsbuildinfo
 **/data/launchpilot.db
 **/data/architectures/
+**/data/platform-sources/
 .env
 .env.*
 !.env.example

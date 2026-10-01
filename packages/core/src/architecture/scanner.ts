@@ -7,7 +7,7 @@ import { collectRepositoryFiles, hash, safeName, sensitiveKey, type RepoFile } f
 import { declarationBlocks } from './blocks';
 import { redactDeploymentObject, redactText } from './redaction';
 import { readTypeScriptConnections, codeOffsets } from './source-reader';
-import { appendCortexArchitecture, isCortexDefinition } from './cortex-reader';
+import { appendCortexArchitecture, isCortexDefinition, isCortexPlatformDefinition } from './cortex-reader';
 
 function classify(type: string): ResourceKind {
   if (/secret(?!smanager)/i.test(type)) return 'secret';
@@ -136,6 +136,19 @@ export async function scanRepositoryArchitecture(root: string, repoUrl: string, 
           const id = add(`${language}:${scope}:${address}`, address, block.keyword === 'module' ? 'module' : classify(type), type, scope, ev,
             { declaration: block.keyword, ...(block.keyword === 'module' ? { source: safeName(/source\s*=\s*"([^"\n]+)"/.exec(block.body)?.[1] ?? (language === 'bicep' ? type : undefined)) } : {}) }, block.keyword === 'data' ? 'external' : 'declared');
           ids.push(id); symbols.set(`${language}:${scope}:${address}`, id);
+          if (language === 'terraform' && block.keyword === 'resource') {
+            const settings: Record<string, string> = {};
+            // Only public sizing selectors, never connection strings or credentials.
+            for (const key of ['sku_name', 'sku', 'capacity', 'replica_count', 'partition_count', 'storage_mb', 'backup_retention_days', 'geo_redundant_backup_enabled', 'version', 'account_tier', 'account_replication_type']) {
+              const match = new RegExp(`^\\s*${key}\\s*=\\s*("[^"\\n]*"|\\d+|true|false|var\\.[A-Za-z_]\\w*|local\\.[A-Za-z_]\\w*)\\s*(?:#.*)?$`, 'm').exec(block.body);
+              if (match) settings[key] = match[1].replace(/^"|"$/g, '');
+            }
+            const resource = graph.resources.find(r => r.id === id)!;
+            if (Object.keys(settings).length) resource.attributes.sizing = JSON.stringify(settings);
+            const cardinality = /^\s*(count|for_each)\s*=\s*([^\n]+)/m.exec(block.body);
+            resource.attributes.cardinality = cardinality ? safeName(`${cardinality[1]} = ${cardinality[2].trim()}`, 'Expression evaluated during Terraform planning') : '1 resource declaration';
+            if (type === 'azurerm_postgresql_flexible_server') resource.attributes.highAvailability = /\bhigh_availability\s*\{/.test(block.body) ? 'HA block declared; inspect mode' : 'No HA block declared';
+          }
           if (block.keyword === 'module') gap('module-boundary', `Module ${address} must be retained or expanded before changing its resources.`, [ev], scope);
           if (/\b(count|for_each)\s*=|\[\s*for\b/.test(block.body)) gap('dynamic-topology', `The instance count for ${address} depends on an expression; preserve that expression in the target plan.`, [ev], scope);
           const refs = language === 'terraform' ? /\b((?:data\.)?(?:aws|azurerm|azapi|google|kubernetes|helm|random|module)_[\w]+\.[\w]+|module\.[\w]+|data\.[\w]+\.[\w]+)\b/g : /\b([A-Za-z_]\w*)\.(?:id|name|properties|outputs)\b/g;
@@ -229,6 +242,22 @@ export async function scanRepositoryArchitecture(root: string, repoUrl: string, 
               const id = add(`k8s:${scope}:${obj.kind}:${name}`, name, classify(obj.kind) === 'unknown' ? 'service' : classify(obj.kind), `${obj.apiVersion}/${obj.kind}`, scope, ev,
                 { namespace, kind: safeName(obj.kind) });
               ids.push(id);
+              if (isCortexPlatformDefinition(obj)) {
+                Object.assign(graph.resources.find(r => r.id === id)!.attributes, {
+                  deploymentOwner: 'Cortex tenant operator / Argo CD',
+                  diagramRole: 'deployment-metadata',
+                  applicationId: safeName(obj.spec.applicationId),
+                  infrastructureMode: safeName(obj.spec.infrastructure?.mode),
+                  serviceValuesRef: safeName(obj.spec.deployment?.serviceValuesRef),
+                });
+                for (const output of Array.isArray(obj.spec.infrastructure?.outputs) ? obj.spec.infrastructure.outputs : []) {
+                  if (typeof output?.name !== 'string' || typeof output.target?.helmValue !== 'string') continue;
+                  const ref = evAt(['spec', 'infrastructure', 'outputs'], `Cortex infrastructure output ${output.name} supplies Helm value ${output.target.helmValue}`);
+                  graph.bindings.push({ id: `binding:${id}:${output.target.helmValue}`, consumerId: id, key: output.target.helmValue,
+                    source: 'expression', sourceKey: output.name, sensitive: sensitiveKey(output.name), evidence: [ref], resolved: false });
+                }
+                gap('cortex-platform-contract', 'This Cortex ApplicationDefinition uses ApplicationDeployment, Helm and its declared infrastructure mode. Resolve the selected chart/value layers, infrastructure outputs and dependencies before export; legacy CortexApp capability contracts do not apply.', [ev], scope);
+              }
               const short = obj.kind === 'Secret' ? 'secret' : obj.kind === 'ConfigMap' ? 'config-map' : obj.kind;
               symbols.set(`kubernetes:${scope}:${short}:${name}`, id);
               const pod = obj.spec?.template?.spec ?? obj.spec?.jobTemplate?.spec?.template?.spec ?? (obj.kind === 'Pod' ? obj.spec : undefined);
@@ -277,6 +306,12 @@ export async function scanRepositoryArchitecture(root: string, repoUrl: string, 
               const labels = obj.spec?.template?.metadata?.labels ?? (obj.kind === 'Pod' ? obj.metadata?.labels : undefined);
               if (labels) graph.resources.find(r => r.id === id)!.attributes.podLabels = JSON.stringify(labels);
               if (obj.kind === 'Ingress') for (const rule of obj.spec?.rules ?? []) for (const path of rule.http?.paths ?? []) if (path.backend?.service?.name) pending.push({ from: id, scope, reference: `Service:${path.backend.service.name}`, relationship: 'routes HTTP to', evidence: ev, format: 'kubernetes' });
+              if (obj.kind === 'HTTPRoute') {
+                for (const rule of obj.spec?.rules ?? []) for (const backend of rule.backendRefs ?? []) if (backend.name && (!backend.kind || backend.kind === 'Service') && (!backend.group || backend.group === '')) {
+                  pending.push({ from: id, scope: backend.namespace ? `${dirname(file.path)}::${safeName(backend.namespace)}` : scope, reference: `Service:${backend.name}`, relationship: 'routes HTTP to', evidence: ev, format: 'kubernetes' });
+                }
+                for (const parent of obj.spec?.parentRefs ?? []) if (parent.name) pending.push({ from: id, scope: parent.namespace ? `${dirname(file.path)}::${safeName(parent.namespace)}` : scope, reference: `${parent.kind ?? 'Gateway'}:${parent.name}`, relationship: 'attaches route to gateway', evidence: ev, format: 'kubernetes' });
+              }
             }
             unit(file, 'kubernetes', dirname(file.path), ids);
           } else if (data.$schema?.includes('deploymentTemplate') && data.resources) {

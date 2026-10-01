@@ -118,6 +118,10 @@ export async function validateGeneratedBundle(files: Record<string, string>, opt
     const result: Record<string, string> = { ...files, 'validation-report.json': json(report) };
     // Preserve the checked provider lock without exporting state or credentials.
     try { result['.terraform.lock.hcl'] = await readFile(join(root, '.terraform.lock.hcl'), 'utf8'); } catch { /* Initialization failed and the report records it. */ }
+    if (spec.contract === 'cortex-native') for (const directory of spec.terraformRoots ?? []) {
+      if (typeof directory !== 'string' || isAbsolute(directory) || directory.split('/').includes('..')) throw new Error('Unsafe native Terraform root');
+      try { result[`${directory}/.terraform.lock.hcl`] = await readFile(join(root, directory, '.terraform.lock.hcl'), 'utf8'); } catch { /* Recorded by initialization check. */ }
+    }
     return { files: result, report };
   } finally { if (timer) clearInterval(timer); await publishing; if (!durableDirectory) await rm(root, { recursive: true, force: true }); else await rm(join(root, 'private-validation-target.json'), { force: true }); }
 }

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import type { RepositoryArchitecture } from '../types/architecture';
 import type { GroundedArchitecturePlan } from './planner';
-import { buildDeploymentTopology, deploymentPricing, type DeploymentTopology } from './deployment-topology';
+import { buildDeploymentTopology, deploymentPricing, deploymentTotals, type DeploymentTopology } from './deployment-topology';
 import { compileCortexDesign } from './cortex-design';
 import { deploymentEnvironments, environmentName, type ArchitectureCloud } from './experience';
+import { compileNativeCortexEdits } from './cortex-native-design';
 
 const identifier = z.string().min(1).max(600);
 const label = z.string().trim().min(1).max(240);
@@ -101,7 +102,7 @@ export function materializeArchitectureDesign(graph: RepositoryArchitecture, des
       topology.connections = topology.connections.filter(e => e.id !== edit.id);
     }
   }
-  topology.totals = { workloads: topology.workloads.length, applicationPods: topology.workloads.reduce((sum, w) => sum + (w.replicas ?? 0), 0), unspecifiedWorkloads: topology.workloads.filter(w => w.replicas === null).length, applicationContainers: topology.workloads.reduce((sum, w) => sum + (w.replicas ?? 0) * w.containers.filter(c => c.role === 'application').length, 0), initContainers: topology.workloads.reduce((sum, w) => sum + w.containers.filter(c => c.role === 'init').length, 0) };
+  topology.totals = deploymentTotals(topology.workloads);
   for (const [id, controlId] of [['target-edge-waf', 'edge-waf'], ['target-vault', 'key-vault']]) if (!topology.nodes.some(n => n.id === id)) {
     const control = topology.controls.find(c => c.id === controlId);
     if (control) { control.decision = 'not-selected'; control.recommendation = 'Removed from the proposed architecture by the user. Confirm replacement protection and delivery with the platform owner.'; }
@@ -111,6 +112,7 @@ export function materializeArchitectureDesign(graph: RepositoryArchitecture, des
 
 export function inspectArchitectureDesign(graph: RepositoryArchitecture, design: ArchitectureDesign, plan?: GroundedArchitecturePlan): DesignIssue[] {
   const topology = materializeArchitectureDesign(graph, design, plan), issues: DesignIssue[] = [];
+  if (graph.deploymentTarget?.kind === 'cortex-platform') issues.push(...compileNativeCortexEdits(graph, design, topology).issues);
   if ((design.cloudProvider ?? 'azure') !== 'azure') issues.push({ id: 'cloud-export', severity: 'blocker', message: 'Terraform/Bicep export validation currently supports Azure. This cloud proposal requires its native Terraform compiler; Bicep is Azure-only.' });
   const base = buildDeploymentTopology(graph, design.unitIds, plan, design.cloudProvider ?? 'azure', design.environment);
   for (const removed of base.nodes.filter(n => !topology.nodes.some(t => t.id === n.id))) {
@@ -129,6 +131,6 @@ export function inspectArchitectureDesign(graph: RepositoryArchitecture, design:
   if (units.length && units.every(u => u.format === 'cortex')) {
     issues.push(...compileCortexDesign(graph, design, topology).issues);
     for (const node of topology.nodes.filter(n => n.basis === 'recommendation' && !['target-edge-waf', 'target-vault'].includes(n.id) && !/external/i.test(n.owner))) issues.push({ id: `implementation:${node.id}`, severity: 'blocker', componentId: node.id, message: `${node.name} needs a reviewed infrastructure implementation. Remove it or implement its provider contract before infrastructure export.` });
-  } else if (design.edits.length) issues.push({ id: 'export-owner', severity: 'blocker', message: 'This edited design is saved. Infrastructure export of edits currently supports Cortex deployment contracts; this deployment owner needs an edit compiler before Terraform/Bicep can represent these changes.' });
+  } else if (design.edits.length && graph.deploymentTarget?.kind !== 'cortex-platform') issues.push({ id: 'export-owner', severity: 'blocker', message: 'This edited design is saved. Infrastructure export of edits currently supports Cortex deployment contracts; this deployment owner needs an edit compiler before Terraform/Bicep can represent these changes.' });
   return issues;
 }

@@ -30,6 +30,25 @@ const instance = { apiVersion: definition.apiVersion, kind: 'CortexApp', metadat
 } };
 
 describe('Cortex and mixed deployment evidence', () => {
+  it('keeps Cortex 2 infrastructure-output contracts separate from legacy capabilities sharing the same GVK', async () => {
+    const platform = { apiVersion: definition.apiVersion, kind: 'ApplicationDefinition', metadata: { name: 'insight-0-0-2' }, spec: {
+      applicationId: 'insight', deployment: { serviceValuesRef: 'services/insight/chart/values-prod.yaml' },
+      infrastructure: { mode: 'Terraform', outputs: [{ name: 'keyvaultUrl', target: { helmValue: 'appInfra.keyvaultUrl' } }] },
+      capabilities: { cookiePolicy: 'StripAll', appRoles: [{ name: 'org_admin' }] },
+      dependencies: [{ definitionRef: { name: 'rag-ingestion-0-1-0' } }],
+    } };
+    // Include both formats in one document stream to exercise the reader's
+    // second parsing pass, not only the scanner's initial dispatch.
+    const graph = await fixture({ 'deploy/prod/definitions.yaml': `${JSON.stringify(platform)}\n---\n${JSON.stringify(definition)}`, 'deploy/prod/instances/app.yaml': instance });
+    const current = graph.resources.find(r => r.name === 'insight-0-0-2')!;
+    expect(current.attributes).toMatchObject({ deploymentOwner: 'Cortex tenant operator / Argo CD', applicationId: 'insight', infrastructureMode: 'Terraform' });
+    expect(graph.bindings.find(b => b.consumerId === current.id && b.key === 'appInfra.keyvaultUrl')).toMatchObject({ sourceKey: 'keyvaultUrl', resolved: false });
+    expect(graph.gaps.some(g => g.code === 'cortex-platform-contract')).toBe(true);
+    expect(graph.resources.filter(r => r.attributes.provider).map(r => r.name).sort()).toEqual(['ai', 'db']);
+    expect(graph.deploymentUnits.find(u => u.format === 'kubernetes')?.resourceIds).toContain(current.id);
+    expect(graph.deploymentUnits.find(u => u.format === 'cortex')?.resourceIds).not.toContain(current.id);
+    expect(graph.deploymentContext.some(c => c.content.includes('rag-ingestion-0-1-0'))).toBe(true);
+  });
   it('expands actual Cortex contracts and overlays without combining identically named environments', async () => {
     const graph = await fixture({ 'deploy/prod/definition.yaml': definition, 'deploy/prod/instances/app.yaml': instance, 'deploy/qa/definitions/definition.yaml': definition, 'deploy/qa/instances/app.yaml': instance });
     expect(graph.deploymentUnits.map(u => u.id).sort()).toEqual(['cortex:deploy/prod', 'cortex:deploy/qa']);

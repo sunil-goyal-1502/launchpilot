@@ -20,6 +20,8 @@ async function get<T>(kind: string, id: string): Promise<T> {
 }
 export const saveArchitecture = (value: RepositoryArchitecture) => put('evidence', value);
 export const loadArchitecture = (id: string) => get<RepositoryArchitecture>('evidence', id);
+export const saveSelectedDeployment = (applicationArchitectureId: string, architectureId: string, designId: string) => put('selected-deployment', { id: applicationArchitectureId, architectureId, designId } as { id: string });
+export const loadSelectedDeployment = (id: string) => get<{ architectureId: string; designId: string }>('selected-deployment', id);
 export const saveArchitecturePlan = (value: GroundedArchitecturePlan) => put('plan', value);
 export const loadArchitecturePlan = (id: string) => get<GroundedArchitecturePlan>('plan', id);
 export const saveArchitectureDesign = (value: ArchitectureDesign) => put('design', value);

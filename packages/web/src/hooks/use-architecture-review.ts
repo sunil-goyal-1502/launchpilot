@@ -11,6 +11,7 @@ export function useArchitectureReview(architectureId: string, unitIds: string[],
   const [review, setReview] = useState<ArchitectureReviewResponse | null>(initial ?? null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const current = useRef(review);
   const requestScope = useRef('');
   const apply = useCallback((value: ArchitectureReviewResponse) => {
@@ -67,14 +68,17 @@ export function useArchitectureReview(architectureId: string, unitIds: string[],
     } finally { setSaving(false); }
   }, [apply]);
   const resume = useCallback(async () => {
-    if (!current.current) return;
+    if (resuming) return;
+    setResuming(true); setNotice(null);
     try {
-      const response = await fetch('/api/architecture/design', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: current.current.design.id }) });
+      const response = await fetch('/api/architecture/design', { method: current.current ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(current.current ? { id: current.current.design.id } : { architectureId, unitIds: JSON.parse(units), cloudProvider, environment }) });
       const result = await response.json();
-      if (!response.ok) { setNotice(result.error); return; }
+      if (!response.ok) throw new Error(result.error ?? 'Could not resume the AI review');
       apply(result);
-    } catch { setNotice('Connection interrupted. The saved proposal and review checkpoints are preserved; retry when connected.'); }
-  }, [apply]);
+      setNotice(result.job.status === 'complete' ? 'AI review complete.' : 'AI review resumed from saved checkpoints. You can continue editing the architecture.');
+    } catch (error) { const message = error instanceof TypeError ? 'Connection interrupted. The saved proposal and review checkpoints are preserved; retry when connected.' : error instanceof Error ? error.message : 'Could not resume the AI review'; setNotice(message); throw new Error(message); }
+    finally { setResuming(false); }
+  }, [apply, resuming, architectureId, units, cloudProvider, environment]);
   const matching = review?.design.architectureId === architectureId && sameScope(review.design);
-  return { review: matching ? review : null, notice, saving, save, resume };
+  return { review: matching ? review : null, notice, saving, save, resume, resuming };
 }

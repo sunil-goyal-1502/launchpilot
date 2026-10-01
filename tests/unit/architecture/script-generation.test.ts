@@ -19,7 +19,7 @@ describe('script generation prerequisites',()=>{
     const html=render(state);
     expect(html).toContain('Architecture review needs attention');
     expect(html).toContain(state.reviewJob!.error);
-    expect(html).toContain('Resume architecture review');
+    expect(html).toContain('Retry AI review');
     expect(html).toContain('selecting a validation target will not resolve this review failure');
   });
   it('keeps design blockers and unsaved revisions gated while allowing advisory warnings',()=>{
@@ -28,5 +28,20 @@ describe('script generation prerequisites',()=>{
     expect(blocker?.details).toEqual(['Supply the new workload image']);
     expect(blocker?.canResume).toBe(false);
     expect(scriptGenerationBlocker({...ready,saving:true})?.title).toBe('Saving architecture changes');
+  });
+  it('offers recovery for missing and stale jobs but never a fake manual completion action',()=>{
+    expect(scriptGenerationBlocker({...ready,hasPlan:false})?.canResume).toBe(true);
+    const reviewJob={id:'r',designId:'d',architectureId:'a',unitIds:[],status:'running' as const,step:'Reviewing',completedCalls:1,reusedCalls:0,attempt:1,updatedAt:'2026-10-01T00:00:00Z'};
+    expect(scriptGenerationBlocker({...ready,hasPlan:false,reviewJob},Date.parse('2026-10-01T00:02:00Z'))?.canResume).toBe(true);
+    expect(scriptGenerationBlocker({...ready,hasPlan:false,reviewJob},Date.parse('2026-10-01T00:00:20Z'))?.canResume).toBe(false);
+  });
+  it('exports the pinned native Cortex contract independently of a paused optional AI review',()=>{
+    const state={...ready,hasPlan:false,nativeCortex:true};
+    const html=render(state);
+    expect(scriptGenerationBlocker(state)).toBeNull();
+    expect(html).toContain('Generate and validate Cortex scripts');
+    expect(html).not.toContain('Generate and validate Terraform + Bicep');
+    expect(html).not.toContain('Cloud validation target (optional)');
+    expect(scriptGenerationBlocker({...state,issues:[{id:'native-edit',severity:'blocker',message:'Unsupported runtime edit'}]})?.details).toEqual(['Unsupported runtime edit']);
   });
 });

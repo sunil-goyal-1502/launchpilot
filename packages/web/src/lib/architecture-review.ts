@@ -79,7 +79,7 @@ export async function editArchitectureReview(id: string, expectedRevision: numbe
 export async function retryArchitectureReview(id: string) {
   return serializeArchitectureWrite(`job:${id}`, async () => {
     const job = await loadArchitectureJob(id);
-    if (job.status === 'failed') await saveArchitectureJob({ ...job, status: 'queued', error: undefined, step: 'Resuming from saved review checkpoints', updatedAt: now() });
+    if (job.status === 'failed' || (job.status === 'running' || job.status === 'queued') && Date.now() - Date.parse(job.updatedAt) > 45000) await saveArchitectureJob({ ...job, status: 'queued', error: undefined, step: 'Resuming from saved review checkpoints', updatedAt: now() });
   });
 }
 
@@ -108,7 +108,10 @@ export async function runArchitectureReview(id: string): Promise<void> {
         const checkpoint = checkpointId(args);
         const cached = await loadArchitectureCheckpoint(checkpoint);
         if (cached) { job.reusedCalls++; job.step = `Reusing saved review checkpoints (${job.reusedCalls})`; await persist(); return cached as never; }
-        job.step = args[0].includes('SHARED-DESIGN') ? 'Reviewing the complete component architecture' : args[0].includes('configuration') ? `Reviewing configuration delivery · ${job.completedCalls} completed model requests` : 'Validating architecture recommendations';
+        job.step = args[0].includes('SHARED-DESIGN') ? 'Reviewing the complete component architecture'
+          : /Review (selected|related) deployment implementations/.test(args[0]) ? `Reviewing saved deployment files · ${job.completedCalls} completed model requests`
+          : args[0].includes('Consolidate already-reviewed') ? 'Combining the reviewed deployment constraints'
+          : args[0].includes('configuration') ? `Reviewing configuration delivery · ${job.completedCalls} completed model requests` : 'Validating architecture recommendations';
         await persist();
         const response = await original(...args);
         await saveArchitectureCheckpoint(checkpoint, response);

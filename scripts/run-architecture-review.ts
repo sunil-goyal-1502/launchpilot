@@ -1,16 +1,17 @@
-import { resolve } from 'node:path';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { loadArchitecture } = require('../packages/web/src/lib/architecture-store.ts');
-const { prepareArchitectureReview, retryArchitectureReview, runArchitectureReview, readArchitectureReview } = require('../packages/web/src/lib/architecture-review.ts');
-
-const [snapshotId, unit] = process.argv.slice(2);
-if (!snapshotId || !unit) throw new Error('Usage: run-architecture-review.ts SNAPSHOT_ID UNIT_ID');
-process.chdir(resolve('packages/web'));
-const prepared = await prepareArchitectureReview(await loadArchitecture(snapshotId), [unit]);
-console.log(JSON.stringify({ designId: prepared.design.id, status: prepared.job.status }));
-await retryArchitectureReview(prepared.design.id);
-await runArchitectureReview(prepared.design.id);
-const result = await readArchitectureReview(prepared.design.id);
-console.log(JSON.stringify({ status: result.job.status, step: result.job.step, error: result.job.error, completedCalls: result.job.completedCalls, reusedCalls: result.job.reusedCalls, coverage: result.plan?.evidenceCoverage }));
-if (result.job.status === 'failed') process.exitCode = 1;
+/** Resume a saved review, with progress only (never print provider inputs). */
+const id = process.argv[2];
+if (!/^[a-f0-9]{64}$/.test(id ?? '')) throw new Error('Supply a saved architecture design ID.');
+const module = await import('../packages/web/src/lib/architecture-review');
+const { runArchitectureReview, readArchitectureReview, retryArchitectureReview } = (module as any).default ?? module;
+const progress = setInterval(async () => {
+  try { const { job } = await readArchitectureReview(id); console.log(JSON.stringify({ status: job.status, step: job.step, completed: job.completedCalls, reused: job.reusedCalls })); }
+  catch { /* The final read reports a persistent error. */ }
+}, 20000);
+try {
+  await retryArchitectureReview(id);
+  await runArchitectureReview(id);
+  const { job, design } = await readArchitectureReview(id);
+  console.log(JSON.stringify({ status: job.status, designId: design.id, planId: design.basePlanId, error: job.error }));
+  if (job.status === 'failed') process.exitCode = 1;
+} finally { clearInterval(progress); }
+export {};

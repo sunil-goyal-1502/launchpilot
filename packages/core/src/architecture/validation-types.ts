@@ -37,7 +37,7 @@ export function isValidationComplete(report: ValidationReport): boolean {
   return report.status === 'passed' && report.cloudValidated && report.deployed && report.deploymentAttempted && !!report.targetId && !!report.targetFingerprint && report.checks.length === requiredValidationCheckIds.length && requiredValidationCheckIds.every(id => report.checks.filter(c => c.id === id && (c.status === 'passed' || optional.has(id) && c.status === 'not-applicable')).length === 1);
 }
 export interface ArchitectureValidationJob {
-  id: string; designId?: string; revision?: number; planId: string; targetId?: string; targetFingerprint?: string; deployTest: boolean;
+  id: string; designId?: string; revision?: number; planId?: string; nativeCortex?: boolean; targetId?: string; targetFingerprint?: string; deployTest: boolean;
   status: 'queued' | 'running' | 'passed' | 'failed' | 'blocked'; step: string;
   createdAt: string; updatedAt: string; report?: ValidationReport; error?: string; bundleHash?: string;
 }

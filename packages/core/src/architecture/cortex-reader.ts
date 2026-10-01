@@ -4,9 +4,10 @@ import type { Node as YAMLNode } from 'yaml';
 import type { RepositoryArchitecture, ArchitectureResource, ResourceKind } from '../types/architecture';
 import { hash, safeName, sensitiveKey, type RepoFile } from './files';
 import { redactDeploymentObject } from './redaction';
+import { isCortexDefinition } from './cortex-contract';
+export { isCortexDefinition, isCortexPlatformDefinition } from './cortex-contract';
 
 type ObjectValue = Record<string, any>;
-export const isCortexDefinition = (data: ObjectValue) => typeof data?.apiVersion === 'string' && data.apiVersion.startsWith('cortex.cortex.ai/') && ['ApplicationDefinition', 'CortexApp'].includes(data.kind);
 const deploymentRoot = (path: string) => dirname(path).replace(/\/(?:definitions|instances)$/, '');
 
 /** Read declared Cortex component/capability contracts, without executing the operator or claiming runtime state. */

@@ -6,6 +6,26 @@ export interface SourceEvidence {
   endLine: number;
   kind: 'deployment' | 'code' | 'configuration';
   summary: string;
+  /** Original location when evidence is combined from multiple repositories. */
+  repoUrl?: string;
+  revision?: string | null;
+  sourceFile?: string;
+  /** Rendered evidence is derived from these pinned source files, not a Git blob. */
+  derivedFrom?: string[];
+}
+
+export interface ArchitectureDeploymentTarget {
+  ref?: string;
+  checkedAt?: string;
+  kind: 'cortex-platform';
+  applicationId: string;
+  definitionName: string;
+  environment: string;
+  repoUrl: string;
+  revision: string;
+  architectureId: string;
+  applicationArchitectureId: string;
+  unitIds: string[];
 }
 
 export type ResourceKind = 'application' | 'database' | 'cache' | 'queue' | 'streaming' | 'storage' | 'vault' | 'secret' | 'identity' | 'network' | 'configuration' | 'service' | 'module' | 'unknown';
@@ -70,6 +90,14 @@ export interface RepositoryArchitecture {
   repoUrl: string;
   revision: string | null;
   scannedAt: string;
+  deploymentTarget?: ArchitectureDeploymentTarget;
+  sources?: Array<{ role: 'application' | 'deployment'; repoUrl: string; revision: string | null; architectureId: string }>;
+  deploymentPreparation?: {
+    applicationId: string; definitionName: string; environment: string;
+    definitionFiles: string[];
+    charts: Array<{ applicationId: string; path: string; valuesFiles: string[]; renderedFile: string }>;
+    previewOnly: true; unresolvedInputs: string[];
+  };
   resources: ArchitectureResource[];
   connections: ArchitectureConnection[];
   bindings: ConfigurationBinding[];

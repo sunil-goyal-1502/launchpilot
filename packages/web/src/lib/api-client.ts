@@ -17,6 +17,7 @@ export interface AnalyzeRequest {
   ai?: boolean;
   environment?: string;
   cloudProvider?: ArchitectureCloud;
+  cortex?: { applicationId: string; environment: string; definitionName?: string };
 }
 export interface ArchitectureReviewResponse {
   design: ArchitectureDesign; job: ArchitectureReviewJob; plan: GroundedArchitecturePlan | null;

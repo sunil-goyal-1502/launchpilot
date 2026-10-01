@@ -1,11 +1,12 @@
 import type { RepositoryArchitecture } from '../types/architecture';
 import type { ArchitectureDesign, DesignIssue } from './design';
 import { buildDeploymentTopology, deploymentDocuments, type DeploymentTopology } from './deployment-topology';
+import { isCortexDefinition } from './cortex-contract';
 
 type Obj = Record<string, any>;
 /** Compile user intent onto copies of the exact Cortex contracts. Never rewrite source evidence. */
 export function compileCortexDesign(graph: RepositoryArchitecture, design: ArchitectureDesign, topology: DeploymentTopology) {
-  const documents = deploymentDocuments(graph, design.unitIds).filter(d => ['ApplicationDefinition', 'CortexApp'].includes(d.value.kind));
+  const documents = deploymentDocuments(graph, design.unitIds).filter(d => isCortexDefinition(d.value));
   const issues: DesignIssue[] = [];
   const instances = documents.filter(d => d.value.kind === 'CortexApp');
   const instance = instances[0]?.value;

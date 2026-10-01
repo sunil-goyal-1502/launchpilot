@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { createLLMProvider, generateArchitectureArtifact, resolveProviderConfig, buildArchitectureBundle, buildCortexDeploymentBundle, prepareValidationBundle, validateGeneratedBundle, validationTargetSchema } from '@launchpilot/core';
+import { createLLMProvider, generateArchitectureArtifact, resolveProviderConfig, buildArchitectureBundle, buildCortexDeploymentBundle, buildNativeCortexBundle, prepareValidationBundle, validateGeneratedBundle, validationTargetSchema } from '@launchpilot/core';
 import type { ArchitectureValidationJob, ValidationTarget } from '@launchpilot/core';
 import { readArchitectureReview } from './architecture-review';
 import { scriptGenerationBlocker } from './script-generation';
+import { readPinnedCortexSource } from './cortex-connection';
 import { loadArchitecture, loadArchitecturePlan, cachedArchitectureArtifact, cacheArchitectureArtifact, loadArchitectureDesign, loadValidationJob, saveValidationJob, saveValidationBundle, loadValidationBundle, saveLatestValidation, loadLatestValidation, serializeArchitectureWrite } from './architecture-store';
 
 const now = () => new Date().toISOString();
@@ -23,16 +24,19 @@ export async function validationTargets(): Promise<ValidationTarget[]> {
 export async function prepareArchitectureValidation(input: { designId?: string; revision?: number; planId?: string; targetId?: string; targetFingerprint?: string; deployTest?: boolean }) {
   const review = input.designId ? await readArchitectureReview(input.designId) : undefined;
   if (review && review.design.revision !== input.revision) throw new Error('REVISION_CONFLICT: Review the current architecture revision before generating scripts.');
-  const blocker = review ? scriptGenerationBlocker({hasPlan:!!review.plan,reviewJob:review.job,issues:review.issues,environment:review.design.environment}) : null;
+  const evidence = review ? await loadArchitecture(review.design.architectureId) : undefined;
+  const nativeCortex = evidence?.deploymentTarget?.kind === 'cortex-platform';
+  const blocker = review ? scriptGenerationBlocker({hasPlan:!!review.plan,nativeCortex,reviewJob:review.job,issues:review.issues,environment:review.design.environment}) : null;
   if (blocker) throw new Error([blocker.title,blocker.message,...blocker.details].join('\n'));
-  const plan = review?.plan ?? await loadArchitecturePlan(input.planId ?? '');
-  if (plan.provider !== 'azure') throw new Error('Validated infrastructure export currently supports Azure only. This proposal needs a native cloud Terraform implementation; Bicep cannot deploy AWS or GCP.');
+  const plan = review?.plan ?? (nativeCortex ? undefined : await loadArchitecturePlan(input.planId ?? ''));
+  if ((plan?.provider ?? review?.design.cloudProvider) !== 'azure') throw new Error('Validated infrastructure export currently supports Azure only. This proposal needs a native cloud Terraform implementation; Bicep cannot deploy AWS or GCP.');
+  if (nativeCortex && (input.targetId || input.deployTest)) throw new Error('Current Cortex uses its existing tenant state and deployment workflow. This exporter runs local native checks; generic Azure validation targets cannot safely deploy this contract.');
   const target = input.targetId ? (await validationTargets()).find(t => t.id === input.targetId) : undefined;
   if (input.targetId && !target) throw new Error('The selected validation target is unavailable.');
-  if (target && (target.architectureId !== plan.architectureId || JSON.stringify([...target.unitIds].sort()) !== JSON.stringify([...plan.unitIds].sort()))) throw new Error('The validation target belongs to a different repository snapshot or deployment scope.');
+  if (target && (target.architectureId !== plan!.architectureId || JSON.stringify([...target.unitIds].sort()) !== JSON.stringify([...plan!.unitIds].sort()))) throw new Error('The validation target belongs to a different repository snapshot or deployment scope.');
   if (input.deployTest && (!target?.allowTestDeployment || input.targetFingerprint !== validationTargetFingerprint(target))) throw new Error('A test deployment requires explicit authorization for the currently displayed non-production target.');
   const job: ArchitectureValidationJob = {
-    id: createHash('sha256').update(randomUUID()).digest('hex'), designId: review?.design.id, revision: review?.design.revision, planId: plan.id,
+    id: createHash('sha256').update(randomUUID()).digest('hex'), designId: review?.design.id, revision: review?.design.revision, planId: plan?.id, ...(nativeCortex ? { nativeCortex: true } : {}),
     targetId: target?.id, targetFingerprint: target ? validationTargetFingerprint(target) : undefined, deployTest: input.deployTest ?? false,
     status: 'queued', step: 'Generating scripts from the saved architecture revision', createdAt: now(), updatedAt: now(),
   };
@@ -48,7 +52,7 @@ export async function prepareArchitectureValidation(input: { designId?: string; 
     }
     await saveValidationJob(job);
     for (const key of reservations) await saveLatestValidation(key, job.id);
-    await saveLatestValidation(job.designId ?? job.planId, job.id);
+    await saveLatestValidation(job.designId ?? job.planId!, job.id);
   });
   return job;
 }
@@ -74,24 +78,26 @@ export async function runArchitectureValidation(id: string): Promise<void> {
     const persist = () => serializeArchitectureWrite(`validation:${id}`, async () => { job.updatedAt = now(); await saveValidationJob(job); });
     const heartbeat = setInterval(() => { void persist().catch(() => undefined); }, 15000);
     try {
-      const plan = await loadArchitecturePlan(job.planId), graph = await loadArchitecture(plan.architectureId);
       const design = job.designId ? await loadArchitectureDesign(job.designId) : undefined;
+      const plan = job.planId ? await loadArchitecturePlan(job.planId) : undefined;
+      const graph = await loadArchitecture(design?.architectureId ?? plan!.architectureId);
       if (design && design.revision !== job.revision) throw new Error('The architecture changed before validation started. Generate scripts for the current revision.');
       const target = job.targetId ? (await validationTargets()).find(t => t.id === job.targetId) : undefined;
       if (job.targetId && (!target || validationTargetFingerprint(target) !== job.targetFingerprint)) throw new Error('Validation target configuration changed. Review the new target before starting another run.');
       let files: Record<string, string>;
       try { files = await loadValidationBundle(id); }
       catch {
-        const units = graph.deploymentUnits.filter(unit => plan.unitIds.includes(unit.id));
-        if (units.length && units.every(unit => unit.format === 'cortex')) files = buildCortexDeploymentBundle(graph, plan, design);
+        const units = graph.deploymentUnits.filter(unit => (design?.unitIds ?? plan!.unitIds).includes(unit.id));
+        if (graph.deploymentTarget?.kind === 'cortex-platform' && design) files = await buildNativeCortexBundle(graph, design, await readPinnedCortexSource(graph.deploymentTarget), plan);
+        else if (units.length && units.every(unit => unit.format === 'cortex')) files = buildCortexDeploymentBundle(graph, plan!, design);
         else {
           if (design?.edits.length) throw new Error('Infrastructure export requires an edit compiler for this deployment owner. Export the architecture design for review.');
-          const artifact = await cachedArchitectureArtifact(plan.id) ?? await generateArchitectureArtifact(graph, plan, createLLMProvider(resolveProviderConfig()));
+          const artifact = await cachedArchitectureArtifact(plan!.id) ?? await generateArchitectureArtifact(graph, plan!, createLLMProvider(resolveProviderConfig()));
           await cacheArchitectureArtifact(artifact);
-          files = buildArchitectureBundle(graph, plan, artifact);
+          files = buildArchitectureBundle(graph, plan!, artifact);
           if (design) files['architecture-design.json'] = JSON.stringify(design, null, 2);
         }
-        files = prepareValidationBundle(files);
+        if (!job.nativeCortex) files = prepareValidationBundle(files);
         await saveValidationBundle(id, files);
       }
       const result = await validateGeneratedBundle(files, { target, deployTest: job.deployTest, onProgress: async report => {

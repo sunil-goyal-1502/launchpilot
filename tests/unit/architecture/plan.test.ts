@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { RepositoryArchitecture } from '../../../packages/core/src/types/architecture';
 import { validateArchitecturePlan, recommendArchitecture, configurationReviewBatches, reviewConfigurationBatches, architecturePlanSchema, repairPlanEnums, repairFindingReferences, repairOperationalCoverage, attachResourceEvidence, type GroundedArchitecturePlan } from '../../../packages/core/src/architecture/planner';
-import { validateArchitectureArtifact, buildArchitectureBundle, zipArchitectureBundle, type ArchitectureArtifact } from '../../../packages/core/src/architecture/iac';
+import { validateArchitectureArtifact, generateArchitectureArtifact, buildArchitectureBundle, zipArchitectureBundle, type ArchitectureArtifact } from '../../../packages/core/src/architecture/iac';
 import { encodePlanningContext, decodePlanningContext, translatePlanningIds } from '../../../packages/core/src/architecture/planning-context';
 import { unzipSync, strFromU8 } from 'fflate';
 
@@ -34,6 +34,57 @@ function artifact(): ArchitectureArtifact {
   };
 }
 describe('grounded plan and infrastructure completeness', () => {
+  it('reviews oversized selected manifests in stages without dropping any original resource, finding or binding', async () => {
+    const source = graph();
+    source.deploymentContext = [{ file: 'compose.yaml', content: 'x'.repeat(300001), redacted: true }];
+    const { id, architectureId, provider, unitIds, model, createdAt, evidenceCoverage, ...body } = plan();
+    let seenBytes = 0;
+    const client = { analyzeStructured: vi.fn(async (system: string, prompt: string) => {
+      if (system.startsWith('Review selected deployment')) {
+        const { files } = JSON.parse(prompt); seenBytes += files.reduce((n: number, f: {content: string}) => n + f.content.length, 0);
+        return { result: { reviews: files.map((f: {id: string}) => ({ id: f.id, findings: 'Retain the exact application implementation.' })) }, usage: { model: 'test' } };
+      }
+      if (system.includes('SHARED-DESIGN pass')) {
+        const input = decodePlanningContext(JSON.parse(prompt));
+        expect(input.resources).toHaveLength(1); expect(input.gaps).toEqual([]);
+        expect(input.deploymentContext).toEqual([]); expect(input.implementationReviews).toHaveLength(7);
+        return { result: { ...body, configuration: [], decisions: body.decisions.map(d => ({ ...d, resolves: [] })) }, usage: { model: 'test' } };
+      }
+      if (system.startsWith('Complete the missing finding coverage')) return { result: { assignments: [{ decisionId: 'configure-db', findingIds: ['config-gap'] }], decisions: [] }, usage: { model: 'test' } };
+      const local = decodePlanningContext(JSON.parse(prompt).batch);
+      return { result: { configuration: [{ ...body.configuration[0], bindingIds: local.bindings.map((b: {id: string}) => b.id) }], inputs: [] }, usage: { model: 'test' } };
+    }) };
+    const result = await recommendArchitecture(source, [], client as never);
+    expect(seenBytes).toBe(300001);
+    expect(result.implementationReviewCoverage).toEqual({ selectedParts: 7, relatedParts: 0, findingsReviewedSeparately: true });
+    expect(result.evidenceCoverage).toEqual({ resources: 1, bindings: 1, decisions: 1 });
+    expect(() => validateArchitecturePlan(result, source)).not.toThrow();
+  });
+  it('provides actual selected manifests and wiring to generation, preserving multiple documents and excluding other environments', async () => {
+    const source = graph(), selected = plan();
+    source.deploymentUnits = [
+      { id: 'kubernetes:deploy/prod', name: 'prod', format: 'kubernetes', root: 'deploy/prod', files: ['deploy/prod/app.yaml'], resourceIds: ['app'], exportFormats: [] },
+      { id: 'kubernetes:deploy/qa', name: 'qa', format: 'kubernetes', root: 'deploy/qa', files: ['deploy/qa/app.yaml'], resourceIds: [], exportFormats: [] },
+    ];
+    source.evidence[0].file = 'deploy/prod/app.yaml';
+    source.deploymentContext = [
+      { file: 'deploy/prod/app.yaml', content: '{"kind":"Deployment","spec":{"replicas":3}}', redacted: true },
+      { file: 'deploy/prod/app.yaml', content: '{"kind":"ExternalSecret","spec":{"secretStoreRef":{"name":"existing-vault"}}}', redacted: true },
+      { file: 'deploy/qa/app.yaml', content: '{"kind":"Deployment","spec":{"replicas":1}}', redacted: true },
+    ];
+    selected.unitIds = ['kubernetes:deploy/prod']; selected.environment = 'prod';
+    const { id, planId, model, generatedAt, validation, ...body } = artifact();
+    const client = { analyzeStructured: vi.fn(async () => ({ result: body, usage: { model: 'test' } })) };
+    await generateArchitectureArtifact(source, selected, client as never);
+    const call = (client.analyzeStructured.mock.calls as unknown as [string, string][])[0];
+    const request = JSON.parse(call[1]);
+    expect(request.plan).toEqual(selected);
+    expect(request.repository.deploymentContext).toEqual(source.deploymentContext.slice(0, 2));
+    expect(request.repository.bindings).toEqual(source.bindings);
+    expect(request.repository.resources).toEqual(source.resources);
+    expect(call[0]).toContain('enhance their actual resource identities');
+    expect(call[0]).toContain('generate the complete selected architecture from scratch');
+  });
   it('losslessly compresses repeated evidence while retaining optional fields and source text', () => {
     const source = graph();
     source.resources.push({ ...source.resources[0], id: 'second', attributes: { description: 'Reads environment variable DATABASE_URL' } });

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { scanRepositoryArchitecture } from '../../../packages/core/src/architecture/scanner';
-import { buildDeploymentTopology, deploymentDocuments } from '../../../packages/core/src/architecture/deployment-topology';
+import { buildDeploymentTopology, deploymentDocuments, deploymentCountSummary } from '../../../packages/core/src/architecture/deployment-topology';
 import { buildCortexDeploymentBundle } from '../../../packages/core/src/architecture/cortex-bundle';
 import { isRepositoryOnlyComponent, validateArchitecturePlan, type GroundedArchitecturePlan } from '../../../packages/core/src/architecture/planner';
 import type { RepositoryArchitecture } from '../../../packages/core/src/types/architecture';
@@ -48,6 +48,18 @@ describe('separate physical deployment topology', () => {
     }
   });
   const draft = (graph: RepositoryArchitecture, edits: DesignEdit[] = []): ArchitectureDesign => ({ version: 1, id: 'd'.repeat(64), architectureId: graph.id, unitIds: graph.deploymentUnits.map(u => u.id), revision: edits.length, edits, createdAt: '', updatedAt: '' });
+  it('does not export Cortex 2 definitions through the legacy CortexApp compiler even when the source filename is shared', async () => {
+    const graph = await fixture({ 'deploy/prod/definition.yaml': definition, 'deploy/prod/instances/app.yaml': instance });
+    graph.deploymentContext.push({ file: 'deploy/prod/definition.yaml', content: JSON.stringify({
+      apiVersion: definition.apiVersion, kind: 'ApplicationDefinition', metadata: { name: 'current-platform-app' },
+      spec: { applicationId: 'insight', infrastructure: { mode: 'Terraform' }, capabilities: { cookiePolicy: 'StripAll' } },
+    }), redacted: true });
+    for (const design of [undefined, draft(graph)]) {
+      const files = buildCortexDeploymentBundle(graph, planFor(graph), design);
+      const manifests = Object.entries(files).filter(([path]) => path.startsWith('support/cortex/')).map(([, body]) => JSON.parse(body));
+      expect(manifests.map(m => m.metadata.name).sort()).toEqual(['app-v2', 'sample']);
+    }
+  });
   it('creates a proposed edge and vault without waiting for a second model review and selects an explicit environment', async () => {
     const graph = await fixture({ 'deploy/prod/definition.yaml': definition, 'deploy/prod/instances/app.yaml': instance, 'deploy/preprod/definition.yaml': definition, 'deploy/preprod/instances/app.yaml': instance });
     expect(chooseDeploymentScope(graph).unitIds).toEqual(['cortex:deploy/prod']);
@@ -121,16 +133,38 @@ describe('separate physical deployment topology', () => {
     expect(topology.nodes.find(n => n.name === 'main-db')!.details.join()).toContain('not declared');
     expect(topology.nodes.every(n => !n.id.includes('deploy/qa'))).toBe(true);
   });
-  it('keeps multiple containers together in one Kubernetes pod and distinguishes unspecified counts', async () => {
+  it('keeps multiple containers together and applies the documented Kubernetes replica default', async () => {
     const deployment = { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'api', namespace: 'prod' }, spec: { replicas: 3, selector: { matchLabels: { app: 'api' } }, template: { metadata: { labels: { app: 'api' } }, spec: { containers: [{ name: 'api', image: 'api:v1' }, { name: 'proxy', image: 'proxy:v1' }], initContainers: [{ name: 'bootstrap', image: 'bootstrap:v1' }] } } } };
     const unknown = structuredClone(deployment) as any; unknown.metadata.name = 'worker'; delete unknown.spec.replicas;
     const graph = await fixture({ 'deploy/prod/api.yaml': deployment, 'deploy/prod/worker.yaml': unknown });
     const topology = buildDeploymentTopology(graph, graph.deploymentUnits.map(u => u.id));
     expect(topology.workloads).toHaveLength(2);
-    expect(topology.totals.applicationPods).toBe(3);
-    expect(topology.totals.applicationContainers).toBe(6);
-    expect(topology.totals.unspecifiedWorkloads).toBe(1);
+    expect(topology.totals.applicationPods).toBe(4);
+    expect(topology.totals.applicationContainers).toBe(8);
+    expect(topology.totals.unspecifiedWorkloads).toBe(0);
+    expect(topology.workloads.find(w => w.name === 'worker')?.countNote).toBe('Kubernetes default: replicas omitted');
     expect(topology.workloads.find(w => w.name === 'api')!.containers).toHaveLength(3);
+  });
+  it('separates batch parallelism, autoscaling bounds and node-dependent DaemonSets from steady replicas', async () => {
+    const pod = { containers: [{ name: 'app', image: 'app:v1' }], initContainers: [{ name: 'init', image: 'app:v1' }] };
+    const graph = await fixture({ 'deploy/prod/all.yaml': { kind: 'List', apiVersion: 'v1', items: [
+      { kind: 'Deployment', apiVersion: 'apps/v1', metadata: { name: 'api' }, spec: { replicas: 3, template: { spec: pod } } },
+      { kind: 'HorizontalPodAutoscaler', apiVersion: 'autoscaling/v2', metadata: { name: 'api' }, spec: { scaleTargetRef: { kind: 'Deployment', name: 'api' }, minReplicas: 2, maxReplicas: 8 } },
+      { kind: 'Job', apiVersion: 'batch/v1', metadata: { name: 'migration' }, spec: { parallelism: 2, template: { spec: pod } } },
+      { kind: 'CronJob', apiVersion: 'batch/v1', metadata: { name: 'cleanup' }, spec: { jobTemplate: { spec: { template: { spec: pod } } } } },
+      { kind: 'DaemonSet', apiVersion: 'apps/v1', metadata: { name: 'agent' }, spec: { template: { spec: pod } } },
+    ] } });
+    const topology = buildDeploymentTopology(graph, graph.deploymentUnits.map(u=>u.id));
+    expect(deploymentCountSummary(topology)).toMatchObject({ applicationPods: 3, applicationContainers: 3, steadyWorkloads: 2, batchJobs: 2, unspecifiedWorkloads: 1, minPods: 2, maxPods: 8 });
+    expect(topology.workloads.find(w=>w.name==='migration')?.jobParallelism).toBe(2);
+    expect(topology.workloads.find(w=>w.name==='cleanup')?.jobParallelism).toBe(1);
+    expect(topology.workloads.find(w=>w.name==='agent')?.replicas).toBeNull();
+  });
+  it('connects Gateway API HTTPRoutes to their actual backend Services', async () => {
+    const graph = await fixture({ 'deploy/prod/route.yaml': { apiVersion: 'gateway.networking.k8s.io/v1', kind: 'HTTPRoute', metadata: { name: 'api' }, spec: { rules: [{ backendRefs: [{ name: 'api', port: 80 }] }] } }, 'deploy/prod/service.yaml': { apiVersion: 'v1', kind: 'Service', metadata: { name: 'api' }, spec: { ports: [{ port: 80 }] } } });
+    const topology = buildDeploymentTopology(graph, graph.deploymentUnits.map(u=>u.id));
+    const route = topology.nodes.find(n=>n.technology.endsWith('/HTTPRoute'))!, service = topology.nodes.find(n=>n.technology.endsWith('/Service'))!;
+    expect(topology.connections).toContainEqual(expect.objectContaining({ from: route.id, to: service.id, purpose: 'routes HTTP to' }));
   });
   it('exports original operator contracts, proposed Azure additions and explicit platform checks without fictitious ARM workloads', async () => {
     const graph = await fixture({ 'deploy/prod/definition.yaml': definition, 'deploy/prod/instances/app.yaml': instance });

@@ -3,7 +3,7 @@ import type { RepositoryArchitecture } from '../../../packages/core/src/types/ar
 import type { DeploymentTopology, DeploymentWorkload } from '../../../packages/core/src/architecture/deployment-topology';
 import { deploymentEnvironments, reviewDeploymentControls, relatedDeploymentContext } from '../../../packages/core/src/architecture/experience';
 import { estimateArchitectureCost, cpuCores, memoryGiB } from '../../../packages/core/src/architecture/cost';
-import { reviewRelatedDeploymentFiles, selectArchitectureScope, validateRecommendationReuse, type ArchitecturePlanBody } from '../../../packages/core/src/architecture/planner';
+import { reviewDeploymentFiles, reviewRelatedDeploymentFiles, consolidateImplementationReviews, selectArchitectureScope, validateRecommendationReuse, type ArchitecturePlanBody } from '../../../packages/core/src/architecture/planner';
 import type { LLMProvider } from '../../../packages/core/src/agents/ai-analyzer/llm-provider';
 
 function graph(): RepositoryArchitecture { return { version: 1, id: 'a'.repeat(64), repoUrl: 'local://test', revision: 'test', scannedAt: '', resources: [], connections: [], bindings: [], evidence: [], deploymentUnits: [], gaps: [], recommendations: [], deploymentContext: [], coverage: { filesScanned: 1, deploymentFiles: 0, files: [], excluded: [], limits: { maxFiles: 100, maxFileBytes: 100000, maxTotalBytes: 1000000 }, truncated: false, runtimeVerified: false } }; }
@@ -15,6 +15,27 @@ function topology(workloads: DeploymentWorkload[]): DeploymentTopology { return 
 function workload(replicas: number | null = 2): DeploymentWorkload { return { id: 'api', name: 'api', owner: 'Kubernetes', controller: 'Deployment', namespace: 'app', replicas, replicaBasis: 'repository', exposed: true, file: 'deploy/prod/api.yaml', pointer: '', resourceIds: [], evidenceIds: [], containers: [{ name: 'api', image: 'app:test', role: 'application', ports: [], requests: { cpu: '500m', memory: '1Gi' }, limits: {} }] }; }
 
 describe('environment-first evidence review', () => {
+  it('reviews every selected file part separately from related context and rejects incomplete consolidation', async () => {
+    const g = graph();
+    g.deploymentContext = [{ file: 'infra/main.tf', content: 'x'.repeat(80001), redacted: true }];
+    g.relatedDeploymentContext = [{ file: 'chart/optional.yaml', content: 'y', redacted: true }];
+    const source = JSON.stringify(g), seen: string[] = [];
+    const client = { analyzeStructured: vi.fn(async (_system: string, input: string) => {
+      const { files } = JSON.parse(input); seen.push(...files.map((f: {content: string}) => f.content));
+      return { result: { reviews: files.map((f: {id: string}) => ({ id: f.id, findings: 'Preserve this declared implementation and its provider boundary.' })) }, usage: { model: 'test' } };
+    }) } as unknown as LLMProvider;
+    const selected = await reviewDeploymentFiles(g, client, 'azure', 'selected');
+    const related = await reviewDeploymentFiles(g, client, 'azure', 'related', true);
+    expect(seen.join('')).toBe('x'.repeat(80001) + 'y');
+    expect(selected.reviews.every(r => r.role === 'selected')).toBe(true);
+    expect(related.reviews.every(r => r.role === 'related')).toBe(true);
+    const reviews = [...selected.reviews, ...related.reviews];
+    const merge = { analyzeStructured: vi.fn(async (_system: string, input: string) => ({ result: { groups: [{ partIds: JSON.parse(input).map((r: {id: string}) => r.id), constraints: 'Native infrastructure is selected; optional templates are reuse evidence.' }] } })) } as unknown as LLMProvider;
+    expect((await consolidateImplementationReviews(reviews, merge)).context.parts).toHaveLength(3);
+    const broken = { analyzeStructured: vi.fn().mockResolvedValue({ result: { groups: [{ partIds: ['F1'], constraints: 'Incomplete' }] } }) } as unknown as LLMProvider;
+    await expect(consolidateImplementationReviews(reviews, broken)).rejects.toThrow('coverage validation');
+    expect(JSON.stringify(g)).toBe(source);
+  });
   it('shows each actual environment once and keeps Helm/workflows as related definitions', () => {
     const g = graph();
     for (const env of ['prod', 'preprod', 'qa']) add(g, env, `deploy/cortex/${env}`, { [`deploy/cortex/${env}/app.yaml`]: 'kind: CortexApp' });

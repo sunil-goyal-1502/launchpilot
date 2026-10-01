@@ -52,7 +52,7 @@ export async function GET(request: Request) {
     const files = { ...await loadValidationBundle(job.id), 'validation-report.json': JSON.stringify(job.report, null, 2) + '\n' };
     const marker = job.status === 'passed' && isValidationComplete(job.report) ? 'validated' : 'VALIDATION-INCOMPLETE';
     return new Response(Buffer.from(zipArchitectureBundle(files)), { headers: {
-      'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="launchpilot-${(job.designId ?? job.planId).slice(0, 12)}${job.revision === undefined ? '' : '-r' + job.revision}-${marker}.zip"`, 'Cache-Control': 'no-store',
+      'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="launchpilot-${(job.designId ?? job.planId!).slice(0, 12)}${job.revision === undefined ? '' : '-r' + job.revision}-${marker}.zip"`, 'Cache-Control': 'no-store',
     } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Validation results are unavailable' }, { status: 422 });

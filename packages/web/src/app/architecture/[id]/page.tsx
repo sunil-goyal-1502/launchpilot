@@ -1,13 +1,19 @@
 import type { ArchitectureCloud } from '@launchpilot/core';
-import { notFound } from 'next/navigation';
-import { loadArchitecture, loadArchitecturePlan } from '@/lib/architecture-store';
+import { notFound, redirect } from 'next/navigation';
+import { loadArchitecture, loadArchitecturePlan, loadSelectedDeployment } from '@/lib/architecture-store';
 import { EvidenceArchitecture } from '@/components/infrastructure/evidence-architecture';
 import { readArchitectureReview } from '@/lib/architecture-review';
 
 export const dynamic = 'force-dynamic';
-export default async function ArchitectureReviewPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ plan?: string; design?: string; unit?: string | string[]; cloud?: ArchitectureCloud; environment?: string }> }) {
+export default async function ArchitectureReviewPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ plan?: string; design?: string; unit?: string | string[]; cloud?: ArchitectureCloud; environment?: string; original?: string }> }) {
   const { id } = await params;
-  const { plan: planId, design: designId, unit, cloud, environment } = await searchParams;
+  const { plan: planId, design: designId, unit, cloud, environment, original } = await searchParams;
+  // An explicit target change opens its separate saved review. The original
+  // evidence/plan remain available for audit with ?original=1.
+  if (original !== '1') {
+    const selection = await loadSelectedDeployment(id).catch(() => null);
+    if (selection && selection.architectureId !== id) redirect(`/architecture/${selection.architectureId}?design=${selection.designId}`);
+  }
   try {
     const graph = await loadArchitecture(id);
     const review = designId ? await readArchitectureReview(designId) : undefined;

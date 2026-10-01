@@ -5,6 +5,7 @@ import { buildDeploymentTopology, deploymentDocuments } from './deployment-topol
 import { assessArchitecture } from './architect-review';
 import { inspectArchitectureDesign, materializeArchitectureDesign, type ArchitectureDesign } from './design';
 import { compileCortexDesign } from './cortex-design';
+import { isCortexDefinition } from './cortex-contract';
 
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
 const parameter = (name: string) => `[parameters('${name}')]`;
@@ -24,7 +25,7 @@ export function buildCortexDeploymentBundle(graph: RepositoryArchitecture, plan:
   const unsupportedAdditions = topology.nodes.filter(n => n.basis === 'recommendation' && !['target-edge-waf', 'target-vault'].includes(n.id) && !/external/i.test(n.owner));
   if (unsupportedAdditions.length) throw new Error(`The selected Cortex design has additional resources that need an implementation: ${unsupportedAdditions.map(n => n.name).join(', ')}. No partial deployment bundle was produced.`);
   const compiled = design ? compileCortexDesign(graph, design, topology) : undefined;
-  const documents = compiled?.documents ?? deploymentDocuments(graph, plan.unitIds).filter(d => ['ApplicationDefinition', 'CortexApp'].includes(d.value.kind));
+  const documents = compiled?.documents ?? deploymentDocuments(graph, plan.unitIds).filter(d => isCortexDefinition(d.value));
   const instances = documents.filter(d => d.value.kind === 'CortexApp');
   if (instances.length !== 1 || topology.namespaces.length !== 1 || !topology.workloads.length) throw new Error('Select one resolved Cortex application instance for a deployment bundle');
   if (documents.some(d => /\[REDACTED/.test(JSON.stringify(d.value)))) throw new Error('A selected Cortex manifest contains redacted literal values. Convert them to explicit Secret references before exporting deployment manifests.');

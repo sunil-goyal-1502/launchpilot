@@ -59,10 +59,10 @@ export function useDeployWizard() {
     setState(prev => ({ ...prev, repoUrl }));
   }, []);
 
-  const analyze = useCallback(async (repoUrl: string, ai = false, environment = 'production', cloudProvider: ArchitectureCloud = 'azure') => {
+  const analyze = useCallback(async (repoUrl: string, ai = false, environment = 'production', cloudProvider: ArchitectureCloud = 'azure', cortex?: { applicationId: string; environment: string; definitionName?: string }) => {
     setState(prev => ({ ...prev, loading: true, error: null, aiAnalysis: null, aiError: undefined, repoUrl, provider: cloudProvider as CloudProvider }));
     try {
-      const { blueprint, aiAnalysis, aiError, architectureReview, architectureScope } = await analyzeRepo({ repoUrl, ai, environment, cloudProvider });
+      const { blueprint, aiAnalysis, aiError, architectureReview, architectureScope } = await analyzeRepo({ repoUrl, ai, environment, cloudProvider, cortex });
       setState(prev => ({ ...prev, blueprint, aiAnalysis, aiError, architectureReview, architectureUnitIds: architectureScope?.unitIds, loading: false, step: 2 }));
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

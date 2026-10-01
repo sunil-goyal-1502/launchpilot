@@ -11,7 +11,7 @@ type Value = any;
 
 export function encodePlanningContext(scope: RepositoryArchitecture) {
   const aliases = new Map<string, string>();
-  for (const [name, prefix] of [['evidence', 'E'], ['resources', 'R'], ['bindings', 'B'], ['gaps', 'G']] as const) scope[name].forEach((record, i) => aliases.set(record.id, `${prefix}${i + 1}`));
+  for (const [name, prefix] of [['evidence', 'E'], ['resources', 'R'], ['bindings', 'B'], ['gaps', 'G'], ['connections', 'C']] as const) scope[name].forEach((record, i) => aliases.set(record.id, `${prefix}${i + 1}`));
   const originals = new Map([...aliases].map(([id, alias]) => [alias, id]));
   const input = { ...scope, recommendations: undefined, coverage: { ...scope.coverage, files: undefined, excluded: scope.coverage.excluded.filter(e => !e.reason.startsWith('generated')) } };
   const aliased = translatePlanningIds(input, aliases);
@@ -41,7 +41,7 @@ export function encodePlanningContext(scope: RepositoryArchitecture) {
   const dictionary = [...counts].filter(([value, count]) => value.length >= 24 && count >= 2 && (value.length - 15) * count > value.length + 12).map(([value]) => value);
   const ids = new Map(dictionary.map((value, index) => [value, index]));
   const intern = (value: Value): Value => typeof value === 'string' && ids.has(value) ? { $text: ids.get(value) } : Array.isArray(value) ? value.map(intern) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, intern(item)])) : value;
-  const packet = { encoding: 'launchpilot-evidence-tables-v1', instructions: 'All table rows are complete records with fields given by columns. {$absent:true} means an absent optional field. {$text:N} expands to strings[N]. {$template:N,args:[...]} expands templates[N], substituting each {i} with args[i], first resolving any $text. Expand references before reasoning. Nothing is truncated. E/R/B/G aliases are the exact IDs to use in your response. Return readable names, not $text/$template objects.', strings: dictionary, templates: templates.map(t => t.text), evidence: intern(shortened) };
+  const packet = { encoding: 'launchpilot-evidence-tables-v1', instructions: 'All table rows are complete records with fields given by columns. {$absent:true} means an absent optional field. {$text:N} expands to strings[N]. {$template:N,args:[...]} expands templates[N], substituting each {i} with args[i], first resolving any $text. Expand references before reasoning. Nothing in this stage is truncated. E/R/B/G/C aliases are the exact IDs to use in your response. Return readable names, not $text/$template objects.', strings: dictionary, templates: templates.map(t => t.text), evidence: intern(shortened) };
   return { packet, text: JSON.stringify(packet), originals, aliases };
 }
 
